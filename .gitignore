@@ -1,0 +1,24 @@
+# Root
+.DS_Store
+.vscode/
+.env
+.env.*
+!.env.example
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Frontend
+/frontend/node_modules/
+/frontend/.vite/
+/frontend/dist/
+/frontend/.cache/
+
+# Backend
+/backend/node_modules/
+/backend/dist/
+/backend/uploads/
+/backend/.cache/
+
+# Tests & coverage
+coverage/
