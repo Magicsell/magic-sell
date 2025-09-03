@@ -1,4 +1,3 @@
-// backend/src/index.js
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -14,11 +13,11 @@ import fileRoutes from "./routes/fileRoutes.js";
 dotenv.config();
 const app = express();
 
-/* CORS allowlist (env: CORS_ORIGIN = domain1,domain2,...) */
+/* CORS */
 const allowlist = (process.env.CORS_ORIGIN || "")
   .split(",").map(s => s.trim()).filter(Boolean);
 const isAllowed = (origin) => {
-  if (!origin) return true;                 // health/curl
+  if (!origin) return true;
   if (allowlist.includes("*")) return true;
   if (allowlist.includes(origin)) return true;
   if (/\.vercel\.app$/i.test(origin)) return true;
@@ -32,17 +31,23 @@ app.use(cors({
 app.options("*", cors());
 
 app.use(express.json());
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads"))); // (Vercel’de kalıcı değil)
 
 /* Health */
 app.get("/", (_req, res) => res.send("MagicSell Backend API running..."));
 app.get("/__db", (_req, res) => res.json(dbState()));
 
-/* === DB bağlantısını en başta başlat & tüm istekler onu beklesin === */
-const dbReady = connectDB();
+/* DB’yi lazy + cache bağla; her istekte hazır olana kadar beklet */
+let dbPromise;
 app.use(async (_req, res, next) => {
-  try { await dbReady; next(); }
-  catch (e) { console.error("DB not ready:", e?.message); res.status(500).json({error:"DB not ready"}); }
+  try {
+    dbPromise = dbPromise || connectDB();
+    await dbPromise;
+    next();
+  } catch (e) {
+    console.error("DB connect error:", e?.message);
+    res.status(500).json({ error: "DB not ready" });
+  }
 });
 
 /* Routes */
@@ -52,9 +57,11 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/route", routeRoutes);
 app.use("/api/files", fileRoutes);
 
-/* Vercel */
+/* Vercel export / Local listen */
 export default app;
 if (!process.env.VERCEL) {
   const PORT = process.env.PORT || 5000;
-  dbReady.then(() => app.listen(PORT, () => console.log("API on :" + PORT)));
+  (dbPromise ||= connectDB())
+    .then(() => app.listen(PORT, () => console.log(`API on :${PORT}`)))
+    .catch(err => { console.error("❌ DB startup:", err?.message); process.exit(1); });
 }

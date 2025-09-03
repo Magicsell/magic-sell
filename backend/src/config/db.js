@@ -1,37 +1,33 @@
 import mongoose from "mongoose";
 
-export const connectDB = async () => {
-  const uri = process.env.MONGODB_URI;
-  if (!uri) throw new Error("MONGODB_URI missing in .env");
+let cached = global.__ms_mongoose;
+if (!cached) cached = global.__ms_mongoose = { conn: null, promise: null };
 
-  // Güvenli log (şifreyi gizle)
-  const redacted = uri.replace(/\/\/([^:]+):([^@]+)@/, "//$1:<redacted>@");
-  console.log("⏳ Connecting to MongoDB with URI:", redacted);
+export async function connectDB() {
+  if (cached.conn) return cached.conn;
 
-  console.log("⏳ Connecting to MongoDB...");
+  const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
+  if (!uri) {
+    // Promise reject dönsün, init’te crash etmesin
+    throw new Error("DB URI missing: set MONGODB_URI (or MONGO_URI) in env");
+  }
 
-  // Önemli: dbName burada net veriliyor
-  const conn = await mongoose.connect(uri, {
-    dbName: "magicsell",
-    serverSelectionTimeoutMS: 10000,
-    socketTimeoutMS: 20000,
-    family: 4,   // <<< IPv4'e zorla
-    tls: true
-  });
+  if (!cached.promise) {
+    cached.promise = mongoose.connect(uri, {
+      // Atlas SRV kullanıyorsan bunlar default; extra ayar gereksiz.
+      // dbName gerekiyorsa ENV ile ver: process.env.MONGO_DB
+      // serverSelectionTimeoutMS: 10000,
+    }).then((m) => m.connection);
+  }
 
-  console.log(
-    `✅ MongoDB Connected: ${conn.connection.host}/${conn.connection.name}`
-  );
-  return conn;
-};
+  cached.conn = await cached.promise;
+  return cached.conn;
+}
 
-// Hızlı sağlık bilgisi için
-export const dbState = () => {
-  const states = ["disconnected", "connected", "connecting", "disconnecting"];
+export function dbState() {
+  const states = ["disconnected","connected","connecting","disconnecting","unauthorized"];
   return {
-    readyState: mongoose.connection.readyState,
-    state: states[mongoose.connection.readyState] || "unknown",
-    name: mongoose.connection.name,
-    host: mongoose.connection.host,
+    state: states[mongoose.connection.readyState] ?? mongoose.connection.readyState,
+    hasUri: Boolean(process.env.MONGODB_URI || process.env.MONGO_URI),
   };
-};
+}
