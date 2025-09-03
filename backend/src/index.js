@@ -1,7 +1,11 @@
 import express from "express";
 import cors from "cors";
 import { connectDB, dbState } from "./config/db.js";
-// ... diğer importlar
+import orderRoutes from "./routes/orderRoutes.js";
+import customerRoutes from "./routes/customerRoutes.js";
+import analyticsRoutes from "./routes/analyticsRoutes.js";
+import routeRoutes from "./routes/routeRoutes.js";
+import fileRoutes from "./routes/fileRoutes.js";
 
 if (!process.env.VERCEL) {
   // sadece local'de .env yükle, prod'da Vercel env'lerinden geliyor
@@ -26,7 +30,7 @@ app.use(cors({
   methods: ["GET","POST","PATCH","PUT","DELETE","OPTIONS"],
   allowedHeaders: ["Content-Type","Authorization"]
 }));
-app.options("*", cors());
+// app.options("*", cors());
 
 app.use(express.json());
 
