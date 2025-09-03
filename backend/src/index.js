@@ -12,24 +12,18 @@ import routeRoutes from "./routes/routeRoutes.js";
 import fileRoutes from "./routes/fileRoutes.js";
 
 dotenv.config();
-
 const app = express();
 
-/* ---------- CORS (allowlist) ---------- */
+/* CORS allowlist (env: CORS_ORIGIN = domain1,domain2,...) */
 const allowlist = (process.env.CORS_ORIGIN || "")
-  .split(",")
-  .map(s => s.trim())
-  .filter(Boolean);
-
+  .split(",").map(s => s.trim()).filter(Boolean);
 const isAllowed = (origin) => {
-  if (!origin) return true;                // health check / curl
+  if (!origin) return true;                 // health/curl
   if (allowlist.includes("*")) return true;
   if (allowlist.includes(origin)) return true;
-  // İstersen Vercel preview’larını da serbest bırak:
   if (/\.vercel\.app$/i.test(origin)) return true;
   return false;
 };
-
 app.use(cors({
   origin: (origin, cb) => cb(null, isAllowed(origin)),
   methods: ["GET","POST","PATCH","PUT","DELETE","OPTIONS"],
@@ -37,41 +31,30 @@ app.use(cors({
 }));
 app.options("*", cors());
 
-/* ---------- Body & static ---------- */
 app.use(express.json());
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads"))); // Vercel'de kalıcı değildir
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-/* ---------- Health ---------- */
+/* Health */
 app.get("/", (_req, res) => res.send("MagicSell Backend API running..."));
 app.get("/__db", (_req, res) => res.json(dbState()));
 
-/* ---------- Routes ---------- */
+/* === DB bağlantısını en başta başlat & tüm istekler onu beklesin === */
+const dbReady = connectDB();
+app.use(async (_req, res, next) => {
+  try { await dbReady; next(); }
+  catch (e) { console.error("DB not ready:", e?.message); res.status(500).json({error:"DB not ready"}); }
+});
+
+/* Routes */
 app.use("/api/orders", orderRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/route", routeRoutes);
 app.use("/api/files", fileRoutes);
 
-/* ---------- DB bağlan ---------- */
-// Vercel: serverless olduğundan 'listen' yok. Bağlantıyı baştan kur.
-const dbReady = connectDB();
-
-/* Bu middleware, istek gelmeden önce DB bağlandığından emin olur (serverless için güvenli). */
-app.use(async (_req, _res, next) => {
-  try { await dbReady; } catch (e) { /* loglanabilir */ }
-  next();
-});
-
-/* ---------- Export / Local listen ---------- */
-export default app; // Vercel için zorunlu
-
+/* Vercel */
+export default app;
 if (!process.env.VERCEL) {
   const PORT = process.env.PORT || 5000;
-  // Lokal geliştirme: DB bağlanınca dinle
-  dbReady.then(() => {
-    app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-  }).catch(err => {
-    console.error("❌ DB connection failed at startup:", err?.message);
-    process.exit(1);
-  });
+  dbReady.then(() => app.listen(PORT, () => console.log("API on :" + PORT)));
 }
