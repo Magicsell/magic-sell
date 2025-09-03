@@ -1,22 +1,20 @@
 import express from "express";
-import dotenv from "dotenv";
 import cors from "cors";
-import path from "path";
-
 import { connectDB, dbState } from "./config/db.js";
-import orderRoutes from "./routes/orderRoutes.js";
-import customerRoutes from "./routes/customerRoutes.js";
-import analyticsRoutes from "./routes/analyticsRoutes.js";
-import routeRoutes from "./routes/routeRoutes.js";
-import fileRoutes from "./routes/fileRoutes.js";
+// ... diğer importlar
 
-dotenv.config();
+if (!process.env.VERCEL) {
+  // sadece local'de .env yükle, prod'da Vercel env'lerinden geliyor
+  const dotenv = (await import("dotenv")).default;
+  dotenv.config();
+}
+
 const app = express();
 
-/* CORS – domainlerini buraya ekle */
+/* CORS */
 const allowlist = (process.env.CORS_ORIGIN || "")
   .split(",").map(s => s.trim()).filter(Boolean);
-const ok = (origin) => {
+const isAllowed = (origin) => {
   if (!origin) return true;
   if (allowlist.includes("*")) return true;
   if (allowlist.includes(origin)) return true;
@@ -24,7 +22,7 @@ const ok = (origin) => {
   return false;
 };
 app.use(cors({
-  origin: (origin, cb) => cb(null, ok(origin)),
+  origin: (origin, cb) => cb(null, isAllowed(origin)),
   methods: ["GET","POST","PATCH","PUT","DELETE","OPTIONS"],
   allowedHeaders: ["Content-Type","Authorization"]
 }));
@@ -32,25 +30,20 @@ app.options("*", cors());
 
 app.use(express.json());
 
-/* 🔁 /tmp uploads’ı public’e bağla (prod) + local path */
-const uploadsProd = "/tmp/uploads";
-const uploadsLocal = path.join(process.cwd(), "uploads");
-app.use("/uploads", express.static(process.env.VERCEL ? uploadsProd : uploadsLocal));
-
 /* Health */
 app.get("/", (_req, res) => res.send("MagicSell Backend API running..."));
 app.get("/__db", (_req, res) => res.json(dbState()));
 
-/* DB – tek kez bağlan, tüm isteklerde reuse et */
+/* DB ready middleware (tek bağlan, herkese paylaş) */
 let dbPromise;
 app.use(async (_req, res, next) => {
   try {
-    dbPromise ||= connectDB();
+    dbPromise = dbPromise || connectDB();
     await dbPromise;
-    next();
+    return next();
   } catch (e) {
-    console.error("DB connect error:", e?.message);
-    res.status(500).json({ error: "DB not ready" });
+    console.error("DB not ready:", e?.message);
+    return res.status(500).json({ error: "DB not ready" });
   }
 });
 
@@ -61,10 +54,20 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/route", routeRoutes);
 app.use("/api/files", fileRoutes);
 
+/* Error handler -> hatayı logla ki 500’lerde ne olduğunu görelim */
+app.use((err, _req, res, _next) => {
+  console.error("UNHANDLED:", err);
+  res.status(500).json({ error: "Internal error" });
+});
+
 /* Vercel export / Local listen */
 export default app;
 if (!process.env.VERCEL) {
   const PORT = process.env.PORT || 5000;
-  (dbPromise ||= connectDB())
-    .then(() => app.listen(PORT, () => console.log(`API on :${PORT}`)));
+  (dbPromise ||= connectDB()).then(() => {
+    app.listen(PORT, () => console.log(`API on :${PORT}`));
+  }).catch((err) => {
+    console.error("❌ DB startup:", err?.message);
+    process.exit(1);
+  });
 }

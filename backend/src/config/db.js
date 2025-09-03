@@ -1,33 +1,36 @@
 import mongoose from "mongoose";
 
-let cached = global.__ms_mongoose;
-if (!cached) cached = global.__ms_mongoose = { conn: null, promise: null };
+const globalWithMongoose = globalThis;
 
-export async function connectDB() {
-  if (cached.conn) return cached.conn;
+export const connectDB = async () => {
+  if (globalWithMongoose._mongooseReady) return mongoose;
 
-  const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
-  if (!uri) {
-    // Promise reject dönsün, init’te crash etmesin
-    throw new Error("DB URI missing: set MONGODB_URI (or MONGO_URI) in env");
+  const uri = process.env.MONGODB_URI;
+  if (!uri) throw new Error("MONGODB_URI is missing");
+
+  try {
+    const conn = await mongoose.connect(uri, {
+      dbName: "magicsell",
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 20000,
+      family: 4,
+      tls: true,
+    });
+    console.log(`✅ MongoDB Connected: ${conn.connection.host}/${conn.connection.name}`);
+    globalWithMongoose._mongooseReady = true;
+    return mongoose;
+  } catch (err) {
+    console.error("❌ Mongo connect error:", err?.message);
+    throw err;
   }
+};
 
-  if (!cached.promise) {
-    cached.promise = mongoose.connect(uri, {
-      // Atlas SRV kullanıyorsan bunlar default; extra ayar gereksiz.
-      // dbName gerekiyorsa ENV ile ver: process.env.MONGO_DB
-      // serverSelectionTimeoutMS: 10000,
-    }).then((m) => m.connection);
-  }
-
-  cached.conn = await cached.promise;
-  return cached.conn;
-}
-
-export function dbState() {
-  const states = ["disconnected","connected","connecting","disconnecting","unauthorized"];
+export const dbState = () => {
+  const states = ["disconnected", "connected", "connecting", "disconnecting"];
   return {
-    state: states[mongoose.connection.readyState] ?? mongoose.connection.readyState,
-    hasUri: Boolean(process.env.MONGODB_URI || process.env.MONGO_URI),
+    readyState: mongoose.connection.readyState,
+    state: states[mongoose.connection.readyState] || "unknown",
+    name: mongoose.connection.name,
+    host: mongoose.connection.host,
   };
-}
+};
