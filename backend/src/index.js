@@ -1,6 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
+import fs from "fs";                // ✅ EKLE
 import path from "path";
 
 import { connectDB, dbState } from "./config/db.js";
@@ -31,7 +32,17 @@ app.use(cors({
 app.options("*", cors());
 
 app.use(express.json());
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads"))); // (Vercel’de kalıcı değil)
+
+/* ---------- UPLOAD ROOT (Vercel: /tmp yazılabilir) ---------- */
+const UPLOAD_ROOT =
+  process.env.UPLOAD_DIR ||
+  (process.env.VERCEL ? "/tmp/uploads" : path.join(process.cwd(), "uploads"));
+
+try { fs.mkdirSync(UPLOAD_ROOT, { recursive: true }); }
+catch (e) { console.warn("Upload dir cannot be ensured:", e.message); }
+
+app.set("UPLOAD_ROOT", UPLOAD_ROOT);
+app.use("/uploads", express.static(UPLOAD_ROOT));   // ✅ BURAYI DEĞİŞTİRDİK
 
 /* Health */
 app.get("/", (_req, res) => res.send("MagicSell Backend API running..."));
