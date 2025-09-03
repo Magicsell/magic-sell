@@ -1,7 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
-import fs from "fs";                // ✅ EKLE
 import path from "path";
 
 import { connectDB, dbState } from "./config/db.js";
@@ -14,10 +13,10 @@ import fileRoutes from "./routes/fileRoutes.js";
 dotenv.config();
 const app = express();
 
-/* CORS */
+/* CORS – domainlerini buraya ekle */
 const allowlist = (process.env.CORS_ORIGIN || "")
   .split(",").map(s => s.trim()).filter(Boolean);
-const isAllowed = (origin) => {
+const ok = (origin) => {
   if (!origin) return true;
   if (allowlist.includes("*")) return true;
   if (allowlist.includes(origin)) return true;
@@ -25,7 +24,7 @@ const isAllowed = (origin) => {
   return false;
 };
 app.use(cors({
-  origin: (origin, cb) => cb(null, isAllowed(origin)),
+  origin: (origin, cb) => cb(null, ok(origin)),
   methods: ["GET","POST","PATCH","PUT","DELETE","OPTIONS"],
   allowedHeaders: ["Content-Type","Authorization"]
 }));
@@ -33,26 +32,20 @@ app.options("*", cors());
 
 app.use(express.json());
 
-/* ---------- UPLOAD ROOT (Vercel: /tmp yazılabilir) ---------- */
-const UPLOAD_ROOT =
-  process.env.UPLOAD_DIR ||
-  (process.env.VERCEL ? "/tmp/uploads" : path.join(process.cwd(), "uploads"));
-
-try { fs.mkdirSync(UPLOAD_ROOT, { recursive: true }); }
-catch (e) { console.warn("Upload dir cannot be ensured:", e.message); }
-
-app.set("UPLOAD_ROOT", UPLOAD_ROOT);
-app.use("/uploads", express.static(UPLOAD_ROOT));   // ✅ BURAYI DEĞİŞTİRDİK
+/* 🔁 /tmp uploads’ı public’e bağla (prod) + local path */
+const uploadsProd = "/tmp/uploads";
+const uploadsLocal = path.join(process.cwd(), "uploads");
+app.use("/uploads", express.static(process.env.VERCEL ? uploadsProd : uploadsLocal));
 
 /* Health */
 app.get("/", (_req, res) => res.send("MagicSell Backend API running..."));
 app.get("/__db", (_req, res) => res.json(dbState()));
 
-/* DB’yi lazy + cache bağla; her istekte hazır olana kadar beklet */
+/* DB – tek kez bağlan, tüm isteklerde reuse et */
 let dbPromise;
 app.use(async (_req, res, next) => {
   try {
-    dbPromise = dbPromise || connectDB();
+    dbPromise ||= connectDB();
     await dbPromise;
     next();
   } catch (e) {
@@ -73,6 +66,5 @@ export default app;
 if (!process.env.VERCEL) {
   const PORT = process.env.PORT || 5000;
   (dbPromise ||= connectDB())
-    .then(() => app.listen(PORT, () => console.log(`API on :${PORT}`)))
-    .catch(err => { console.error("❌ DB startup:", err?.message); process.exit(1); });
+    .then(() => app.listen(PORT, () => console.log(`API on :${PORT}`)));
 }
