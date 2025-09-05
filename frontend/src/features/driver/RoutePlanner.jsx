@@ -8,11 +8,29 @@ import DeliverModal from "../../components/DeliverModal";
 // Bournemouth depot (start)
 const DEPOT = { lat: 50.7192, lng: -1.8808 };
 
+// UK Postcode yakalayıcı (adres sonundan alır)
+const UK_POST_RE = /([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})$/i;
+
 function money(v) {
   return new Intl.NumberFormat("en-GB", {
     style: "currency",
     currency: "GBP",
   }).format(v || 0);
+}
+
+// Google Maps destination metnini üretir (postcode > adresten postcode > lat,lng > adres)
+function toMapsDestination(stop) {
+  const pc = (stop.postcode || "").trim();
+  if (pc) return pc;
+
+  const addr = (stop.address || "").toUpperCase();
+  const m = UK_POST_RE.exec(addr);
+  if (m?.[1]) return m[1];
+
+  if (typeof stop.lat === "number" && typeof stop.lng === "number") {
+    return `${stop.lat},${stop.lng}`;
+  }
+  return stop.address || "";
 }
 
 export default function RoutePlanner() {
@@ -64,9 +82,9 @@ export default function RoutePlanner() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          start: DEPOT,          // Bournemouth depot
+          start: DEPOT, // Bournemouth depot
           statuses: ["pending"],
-          roundTrip: false,      // depoya dönüş istersen true
+          roundTrip: false, // depoya dönüş istersen true
           serviceMin: 5,
           avgSpeedKmh: 30,
           opt: "2opt",
@@ -165,39 +183,51 @@ export default function RoutePlanner() {
                   </tr>
                 </thead>
                 <tbody className="text-slate-200">
-                  {route.stops.map((s, i) => (
-                    <tr key={s.id || s.orderId || i} className="border-t border-slate-800">
-                      <td className="py-2">{i + 1}</td>
-                      <td className="py-2 font-medium">{s.name}</td>
-                      <td className="py-2 text-slate-400">{s.address || "—"}</td>
-                      <td className="py-2">
-                        {s.distanceFromPrevKm} km / {s.driveMinutesFromPrev} min
-                      </td>
-                      <td className="py-2">{s.etaMinutes}</td>
-                      <td className="py-2">{money(s.amount)}</td>
-                      <td className="py-2">
-                        <a
-                          className="text-indigo-400 underline"
-                          href={`https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Open
-                        </a>
-                      </td>
-                      <td className="py-2">
-                        <button
-                          onClick={() => {
-                            setDeliverStop(s);
-                            setDeliverOpen(true);
-                          }}
-                          className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-xs font-medium"
-                        >
-                          Complete delivery
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {route.stops.map((s, i) => {
+                    const destination = toMapsDestination(s);
+                    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(
+                      destination
+                    )}`;
+                    return (
+                      <tr
+                        key={s.id || s.orderId || i}
+                        className="border-t border-slate-800"
+                      >
+                        <td className="py-2">{i + 1}</td>
+                        <td className="py-2 font-medium">{s.name}</td>
+                        <td className="py-2 text-slate-400">
+                          {s.address || "—"}
+                        </td>
+                        <td className="py-2">
+                          {s.distanceFromPrevKm} km / {s.driveMinutesFromPrev} min
+                        </td>
+                        <td className="py-2">{s.etaMinutes}</td>
+                        <td className="py-2">{money(s.amount)}</td>
+                        <td className="py-2">
+                          <a
+                            className="text-indigo-400 underline"
+                            href={mapsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="Open in Google Maps (directions)"
+                          >
+                            Go
+                          </a>
+                        </td>
+                        <td className="py-2">
+                          <button
+                            onClick={() => {
+                              setDeliverStop(s);
+                              setDeliverOpen(true);
+                            }}
+                            className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-xs font-medium"
+                          >
+                            Complete delivery
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
