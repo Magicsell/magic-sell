@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import RouteMap from "../../components/RouteMap";
 import { API_URL } from "../../lib/config";
 
-// Bournemouth (depo) — yaklaşık merkez
-const DEPOT = { lat: 50.7192, lng: -1.8808 };
+const DEPOT = {
+  lat: 50.707088,
+  lng: -1.922318,
+  postcode: "BH13 7EX",
+};
 
 export default function AdminDriverBoard() {
   const [route, setRoute] = useState(null);

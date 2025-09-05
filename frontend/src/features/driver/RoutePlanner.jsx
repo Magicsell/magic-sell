@@ -5,8 +5,11 @@ import { API_URL } from "../../lib/config";
 import { getUser } from "../auth/auth";
 import DeliverModal from "../../components/DeliverModal";
 
-// Bournemouth depot (start)
-const DEPOT = { lat: 50.7192, lng: -1.8808 };
+const DEPOT = {
+  lat: 50.707088,
+  lng: -1.922318,
+  postcode: "BH13 7EX",
+};
 
 // UK Postcode yakalayıcı (adres sonundan alır)
 const UK_POST_RE = /([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})$/i;
