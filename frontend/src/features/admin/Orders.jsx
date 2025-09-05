@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import Modal from "../../components/Modal";
 import OrderForm from "./OrderForm";
 import OrderProofModal from "../../components/OrderProofModal";
-import DeliveryModal from "../../components/DeliverModal"; // ← eklendi
+import DeliveryModal from "../../components/DeliverModal";
 import { API_URL } from "../../lib/config";
 
 export default function Orders() {
@@ -53,7 +53,7 @@ export default function Orders() {
   // Admin → Mark delivered → DeliveryModal aç
   function openDeliver(row) {
     setDeliverOrder({
-      id: row._id, // DeliverModal endpoint için
+      id: row._id,
       title: row.shopName || row.customerName || `#${pad(row.orderNo)}`,
       amount: row.totalAmount || 0,
     });
@@ -63,6 +63,24 @@ export default function Orders() {
     setDeliverOpen(false);
     setDeliverOrder(null);
     await fetchOrders(page, status, q);
+  }
+
+  // Admin → Delete
+  async function handleDelete(orderId, isDelivered) {
+    const extra = isDelivered
+      ? "\nThis order is delivered; deleting will remove it permanently."
+      : "";
+    if (!confirm(`Delete this order permanently?${extra}`)) return;
+
+    try {
+      const res = await fetch(`${API_URL}/api/orders/${orderId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Delete failed");
+      await fetchOrders(page, status, q);
+    } catch (e) {
+      alert(e.message || "Delete failed");
+    }
   }
 
   // server'dan çek
@@ -126,10 +144,16 @@ export default function Orders() {
             <Tab active={status === "all"} onClick={() => onChangeStatus("all")}>
               All
             </Tab>
-            <Tab active={status === "pending"} onClick={() => onChangeStatus("pending")}>
+            <Tab
+              active={status === "pending"}
+              onClick={() => onChangeStatus("pending")}
+            >
               Pending
             </Tab>
-            <Tab active={status === "delivered"} onClick={() => onChangeStatus("delivered")}>
+            <Tab
+              active={status === "delivered"}
+              onClick={() => onChangeStatus("delivered")}
+            >
               Delivered
             </Tab>
           </div>
@@ -156,8 +180,11 @@ export default function Orders() {
           </button>
         </div>
 
+        {/* KART (overflow-hidden) */}
         <div className="mt-4 rounded-2xl overflow-hidden shadow-xl bg-white border border-zinc-200 dark:bg-slate-900/60 dark:supports-[backdrop-filter]:bg-slate-900/50 dark:backdrop-blur dark:border-white/10">
-          <div className="px-4 py-3 text-sm text-neutral-400">Latest {pageSize} orders</div>
+          <div className="px-4 py-3 text-sm text-neutral-400">
+            Latest {pageSize} orders
+          </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
@@ -175,55 +202,78 @@ export default function Orders() {
               <tbody className="divide-y divide-neutral-800">
                 {loading && (
                   <tr>
-                    <td colSpan="7" className="px-4 py-10"><Skeleton /></td>
+                    <td colSpan="7" className="px-4 py-10">
+                      <Skeleton />
+                    </td>
                   </tr>
                 )}
 
-                {!loading && clientFiltered.map((o) => (
-                  <tr key={o._id} className="hover:bg-neutral-900/40">
-                    <td className="px-4 py-3 font-medium">#{pad(o.orderNo)}</td>
-                    <td className="px-4 py-3">{fmtDate(o.orderDate)}</td>
-                    <td className="px-4 py-3">{o.shopName}</td>
-                    <td className="px-4 py-3">{o.customerName || "—"}</td>
-                    <td className="px-4 py-3 text-right">£{Number(o.totalAmount || 0).toFixed(0)}</td>
-                    <td className="px-4 py-3"><StatusBadge status={o.status} /></td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          onClick={() => onEdit(o)}
-                          className="rounded-md border border-slate-700 px-2.5 py-1 text-xs hover:bg-slate-800"
-                          title="Edit order"
-                        >
-                          Edit
-                        </button>
-
-                        {/* View sadece delivered */}
-                        {o.status === "delivered" && (
+                {!loading &&
+                  clientFiltered.map((o) => (
+                    <tr key={o._id} className="hover:bg-neutral-900/40">
+                      <td className="px-4 py-3 font-medium">#{pad(o.orderNo)}</td>
+                      <td className="px-4 py-3">{fmtDate(o.orderDate)}</td>
+                      <td className="px-4 py-3">{o.shopName}</td>
+                      <td className="px-4 py-3">{o.customerName || "—"}</td>
+                      <td className="px-4 py-3 text-right">
+                        £{Number(o.totalAmount || 0).toFixed(0)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={o.status} />
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex justify-end gap-2">
                           <button
-                            onClick={() => openProof(o)}
+                            onClick={() => onEdit(o)}
                             className="rounded-md border border-slate-700 px-2.5 py-1 text-xs hover:bg-slate-800"
-                            title="View delivery proof"
+                            title="Edit order"
                           >
-                            View
+                            Edit
                           </button>
-                        )}
 
-                        {o.status !== "delivered" && (
+                          {/* View sadece delivered */}
+                          {o.status === "delivered" && (
+                            <button
+                              onClick={() => openProof(o)}
+                              className="rounded-md border border-slate-700 px-2.5 py-1 text-xs hover:bg-slate-800"
+                              title="View delivery proof"
+                            >
+                              View
+                            </button>
+                          )}
+
+                          {o.status !== "delivered" && (
+                            <button
+                              onClick={() => openDeliver(o)}
+                              className="inline-flex items-center rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 transition"
+                            >
+                              Mark delivered
+                            </button>
+                          )}
+
+                          {/* Delete (her durumda görünsün) */}
                           <button
-                            onClick={() => openDeliver(o)}
-                            className="inline-flex items-center rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 transition"
+                            onClick={() =>
+                              handleDelete(o._id, o.status === "delivered")
+                            }
+                            className="rounded-md border border-red-700 text-red-300 px-2.5 py-1 text-xs hover:bg-red-900/40"
+                            title="Delete order"
                           >
-                            Mark delivered
+                            Delete
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
 
                 {!loading && clientFiltered.length === 0 && (
                   <tr>
-                    <td colSpan="7" className="px-4 py-10 text-center text-neutral-400">No data</td>
+                    <td
+                      colSpan="7"
+                      className="px-4 py-10 text-center text-neutral-400"
+                    >
+                      No data
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -232,46 +282,62 @@ export default function Orders() {
 
           {/* Pagination */}
           <div className="flex items-center justify-between px-4 py-3 border-t border-neutral-800">
-            <div className="text-xs text-neutral-400">Page {page} / {pages}</div>
+            <div className="text-xs text-neutral-400">
+              Page {page} / {pages}
+            </div>
             <div className="flex gap-2">
-              <button onClick={prev} disabled={page <= 1} className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-neutral-800">Previous</button>
-              <button onClick={next} disabled={page >= pages} className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-neutral-800">Next</button>
+              <button
+                onClick={prev}
+                disabled={page <= 1}
+                className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-neutral-800"
+              >
+                Previous
+              </button>
+              <button
+                onClick={next}
+                disabled={page >= pages}
+                className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-neutral-800"
+              >
+                Next
+              </button>
             </div>
           </div>
-
-          {/* Modals */}
-          <Modal open={openNew} onClose={() => setOpenNew(false)} title="Add New Order">
-            <OrderForm
-              onClose={() => setOpenNew(false)}
-              onCreated={() => { setOpenNew(false); fetchOrders(1, status, q); }}
-            />
-          </Modal>
-
-          <Modal open={openEdit} onClose={() => setOpenEdit(false)} title="Edit order">
-            {editing && (
-              <OrderForm
-                mode="edit"
-                initial={editing}
-                onClose={() => setOpenEdit(false)}
-                onSaved={onSavedEdit}
-              />
-            )}
-          </Modal>
-
-          <OrderProofModal
-            open={proofOpen}
-            onClose={() => setProofOpen(false)}
-            order={proofOrder}
-          />
-
-          {/* Admin deliver modal */}
-          <DeliveryModal
-            open={deliverOpen}
-            onClose={() => setDeliverOpen(false)}
-            order={deliverOrder}
-            onSuccess={afterDelivered}
-          />
         </div>
+
+        {/* === MODALS — kartın DIŞINDA === */}
+        <Modal open={openNew} onClose={() => setOpenNew(false)} title="Add New Order">
+          <OrderForm
+            onClose={() => setOpenNew(false)}
+            onCreated={() => {
+              setOpenNew(false);
+              fetchOrders(1, status, q);
+            }}
+          />
+        </Modal>
+
+        <Modal open={openEdit} onClose={() => setOpenEdit(false)} title="Edit order">
+          {editing && (
+            <OrderForm
+              mode="edit"
+              initial={editing}
+              onClose={() => setOpenEdit(false)}
+              onSaved={onSavedEdit}
+            />
+          )}
+        </Modal>
+
+        <OrderProofModal
+          open={proofOpen}
+          onClose={() => setProofOpen(false)}
+          order={proofOrder}
+        />
+
+        <DeliveryModal
+          open={deliverOpen}
+          onClose={() => setDeliverOpen(false)}
+          order={deliverOrder}
+          onSuccess={afterDelivered}
+        />
       </div>
     </div>
   );

@@ -312,3 +312,24 @@ export async function getOrderById(req, res) {
     res.status(400).json({ message: e.message });
   }
 }
+
+
+export async function deleteOrder(req, res) {
+  const { id } = req.params;
+  const doc = await Order.findByIdAndDelete(id);
+  if (!doc) return res.status(404).json({ message: "Order not found" });
+
+  // Eğer “proofUrl” dosyası tutuyorsan ve local ortamdaysan temizle
+  if (doc.proofUrl && doc.proofUrl.startsWith("/uploads/proofs/") && !process.env.VERCEL) {
+    try {
+      fs.unlinkSync(path.join(process.cwd(), doc.proofUrl));
+    } catch (_) {}
+  }
+
+  // Aktif rota kaydında bu order varsa çıkar (modelin varsa)
+  try {
+    await ActiveRoute.updateMany({}, { $pull: { orderIds: doc._id } });
+  } catch (_) {}
+
+  res.json({ ok: true });
+}

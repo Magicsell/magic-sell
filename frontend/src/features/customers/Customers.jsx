@@ -53,6 +53,8 @@ export default function Customers() {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editing, setEditing] = useState(null);
   const [err, setErr] = useState("");
 
   async function load() {
@@ -90,6 +92,24 @@ export default function Customers() {
         (c.name || "").toLowerCase().includes(s)
     );
   }, [all, q]);
+
+  function onOpenEdit(c) {
+    setEditing(c);
+    setShowEdit(true);
+  }
+
+  async function onDelete(c) {
+    if (!window.confirm(`Delete customer "${c.shopName || c.name}"?`)) return;
+    try {
+      const r = await fetch(`${API_URL}/api/customers/${c._id}`, {
+        method: "DELETE",
+      });
+      if (!r.ok) throw new Error("Delete failed");
+      await load();
+    } catch (e) {
+      alert(e.message || "Delete failed");
+    }
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
@@ -130,17 +150,18 @@ export default function Customers() {
               <Th>Phone</Th>
               <Th>Postcode</Th>
               <Th>Address</Th>
+              <Th>Actions</Th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
             {busy && (
               <tr>
-                <Td colSpan={5}>Loading…</Td>
+                <Td colSpan={6}>Loading…</Td>
               </tr>
             )}
             {!busy && rows.length === 0 && (
               <tr>
-                <Td colSpan={5}>No customers found.</Td>
+                <Td colSpan={6}>No customers found.</Td>
               </tr>
             )}
             {rows.map((c) => (
@@ -150,6 +171,22 @@ export default function Customers() {
                 <Td>{c.phone || "—"}</Td>
                 <Td>{c.postcode ? formatUKPostcode(c.postcode) : "—"}</Td>
                 <Td>{c.address || "—"}</Td>
+                <Td>
+                  <div className="flex gap-2">
+                    <button
+                      className="px-2.5 py-1 rounded-md text-xs border border-white/10 hover:bg-white/5"
+                      onClick={() => onOpenEdit(c)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="px-2.5 py-1 rounded-md text-xs bg-red-500/20 text-red-200 hover:bg-red-500/30 border border-red-500/30"
+                      onClick={() => onDelete(c)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </Td>
               </tr>
             ))}
           </tbody>
@@ -162,6 +199,18 @@ export default function Customers() {
           onSaved={() => {
             setShowAdd(false);
             load();
+          }}
+        />
+      )}
+
+      {showEdit && editing && (
+        <EditCustomerModal
+          initial={editing}
+          onClose={() => setShowEdit(false)}
+          onSaved={async () => {
+            setShowEdit(false);
+            setEditing(null);
+            await load();
           }}
         />
       )}
@@ -230,93 +279,160 @@ function AddCustomerModal({ onClose, onSaved }) {
   }
 
   return (
+    <ModalShell title="Add New Customer" onClose={onClose}>
+      <form onSubmit={onSubmit} className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {err && (
+          <div className="sm:col-span-2 rounded-md border border-red-500/30 bg-red-500/10 text-red-300 px-3 py-2 text-sm">
+            {err}
+          </div>
+        )}
+
+        <Label title="Shop name *" error={v.errors.shopName}>
+          <input name="shopName" value={form.shopName} onChange={onChange} className="input" autoFocus />
+        </Label>
+
+        <Label title="Customer name">
+          <input name="name" value={form.name} onChange={onChange} className="input" />
+        </Label>
+
+        <Label title="Phone" error={v.errors.phone}>
+          <input name="phone" value={form.phone} onChange={onChange} placeholder="+44… or 07…" className="input" />
+        </Label>
+
+        <Label title="Postcode" error={v.errors.postcode}>
+          <input name="postcode" value={form.postcode} onChange={onChange} placeholder="SW1A 1AA" className="input" />
+        </Label>
+
+        <Label title="Address" className="sm:col-span-2">
+          <input name="address" value={form.address} onChange={onChange} className="input" />
+        </Label>
+
+        <div className="sm:col-span-2 flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-md text-sm border border-white/10 text-slate-200 hover:bg-white/5">
+            Cancel
+          </button>
+          <button type="submit" disabled={busy || !v.ok} className="px-4 py-2 rounded-md text-sm font-medium bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-60">
+            {busy ? "Saving…" : "Create customer"}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+/* ---------- Edit Customer Modal ---------- */
+
+function EditCustomerModal({ initial, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    shopName: initial?.shopName || "",
+    name: initial?.name || "",
+    phone: initial?.phone || "",
+    postcode: initial?.postcode ? formatUKPostcode(initial.postcode) : "",
+    address: initial?.address || "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  function onChange(e) {
+    const { name, value } = e.target;
+    setForm((s) => ({
+      ...s,
+      [name]: name === "postcode" ? formatUKPostcode(value) : value,
+    }));
+  }
+
+  const v = useMemo(() => {
+    const errors = {};
+    if (!form.shopName.trim()) errors.shopName = "Shop name is required.";
+    if (form.phone && !isValidUKPhone(form.phone))
+      errors.phone = "Enter a valid UK phone (+44… or 07…).";
+    if (form.postcode && !isValidUKPostcode(form.postcode))
+      errors.postcode = "Enter a valid UK postcode (e.g. SW1A 1AA).";
+    return { ok: Object.keys(errors).length === 0, errors };
+  }, [form]);
+
+  async function onSubmit(e) {
+    e.preventDefault();
+    setErr("");
+    if (!v.ok) return;
+
+    try {
+      setBusy(true);
+      const payload = {
+        shopName: form.shopName.trim(),
+        name: emptyToNull(form.name),
+        phone: form.phone ? normalizeUKPhone(form.phone) : null,
+        postcode: form.postcode ? formatUKPostcode(form.postcode) : null,
+        address: emptyToNull(form.address),
+      };
+
+      const res = await fetch(`${API_URL}/api/customers/${initial._id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error("Update failed");
+      onSaved?.();
+    } catch (e) {
+      setErr(e.message || "Error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <ModalShell title="Edit Customer" onClose={onClose}>
+      <form onSubmit={onSubmit} className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {err && (
+          <div className="sm:col-span-2 rounded-md border border-red-500/30 bg-red-500/10 text-red-300 px-3 py-2 text-sm">
+            {err}
+          </div>
+        )}
+
+        <Label title="Shop name *" error={v.errors.shopName}>
+          <input name="shopName" value={form.shopName} onChange={onChange} className="input" autoFocus />
+        </Label>
+
+        <Label title="Customer name">
+          <input name="name" value={form.name} onChange={onChange} className="input" />
+        </Label>
+
+        <Label title="Phone" error={v.errors.phone}>
+          <input name="phone" value={form.phone} onChange={onChange} placeholder="+44… or 07…" className="input" />
+        </Label>
+
+        <Label title="Postcode" error={v.errors.postcode}>
+          <input name="postcode" value={form.postcode} onChange={onChange} placeholder="SW1A 1AA" className="input" />
+        </Label>
+
+        <Label title="Address" className="sm:col-span-2">
+          <input name="address" value={form.address} onChange={onChange} className="input" />
+        </Label>
+
+        <div className="sm:col-span-2 flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-md text-sm border border-white/10 text-slate-200 hover:bg-white/5">
+            Cancel
+          </button>
+          <button type="submit" disabled={busy || !v.ok} className="px-4 py-2 rounded-md text-sm font-medium bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-60">
+            {busy ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+/* ---------- shared modal shell + label styles ---------- */
+
+function ModalShell({ title, onClose, children }) {
+  return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
       <div className="w-full max-w-2xl rounded-xl border border-white/10 bg-slate-900 text-slate-100 shadow-2xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-          <h2 className="font-semibold">Add New Customer</h2>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-200"
-          >
-            ✕
-          </button>
+          <h2 className="font-semibold">{title}</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-200">✕</button>
         </div>
-
-        <form
-          onSubmit={onSubmit}
-          className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4"
-        >
-          {err && (
-            <div className="sm:col-span-2 rounded-md border border-red-500/30 bg-red-500/10 text-red-300 px-3 py-2 text-sm">
-              {err}
-            </div>
-          )}
-
-          <Label title="Shop name *" error={v.errors.shopName}>
-            <input
-              name="shopName"
-              value={form.shopName}
-              onChange={onChange}
-              className="input"
-              autoFocus
-            />
-          </Label>
-
-          <Label title="Customer name">
-            <input
-              name="name"
-              value={form.name}
-              onChange={onChange}
-              className="input"
-            />
-          </Label>
-
-          <Label title="Phone" error={v.errors.phone}>
-            <input
-              name="phone"
-              value={form.phone}
-              onChange={onChange}
-              placeholder="+44… or 07…"
-              className="input"
-            />
-          </Label>
-
-          <Label title="Postcode" error={v.errors.postcode}>
-            <input
-              name="postcode"
-              value={form.postcode}
-              onChange={onChange}
-              placeholder="SW1A 1AA"
-              className="input"
-            />
-          </Label>
-
-          <Label title="Address" className="sm:col-span-2">
-            <input
-              name="address"
-              value={form.address}
-              onChange={onChange}
-              className="input"
-            />
-          </Label>
-
-          <div className="sm:col-span-2 flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-md text-sm border border-white/10 text-slate-200 hover:bg-white/5"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={busy || !v.ok}
-              className="px-4 py-2 rounded-md text-sm font-medium bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-60"
-            >
-              {busy ? "Saving…" : "Create customer"}
-            </button>
-          </div>
-        </form>
+        {children}
       </div>
 
       {/* tailwind utilities */}

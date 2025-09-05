@@ -36,6 +36,19 @@ function pound(n) {
     maximumFractionDigits: 0,
   }).format(n || 0);
 }
+function StatusBadge({ status }) {
+  const s = (status || "").toLowerCase();
+  const color =
+    s === "delivered"
+      ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-400/30"
+      : "bg-amber-500/15 text-amber-300 ring-1 ring-amber-400/30";
+  const label = s === "delivered" ? "Delivered" : "Pending";
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${color}`}>
+      {label}
+    </span>
+  );
+}
 
 /* ---------- Ana Sayfa ---------- */
 export default function DriverHome() {
@@ -49,7 +62,7 @@ export default function DriverHome() {
   async function load() {
     setBusy(true);
     try {
-      const r = await fetch(`${API_URL}/api/orders?page=1&pageSize=100&status=pending`);
+      const r = await fetch(`${API_URL}/api/orders?page=1&pageSize=100`);
       const d = await r.json();
       setRows(d.items ?? []);
     } finally {
@@ -60,14 +73,22 @@ export default function DriverHome() {
     load();
   }, []);
 
-  const withGeo = useMemo(
+  // sayaclar
+  const pending = useMemo(() => rows.filter(o => (o.status || "").toLowerCase() !== "delivered"), [rows]);
+  const delivered = useMemo(() => rows.filter(o => (o.status || "").toLowerCase() === "delivered"), [rows]);
+
+  // rota: sadece geo'su olan *pending* siparişlerle anlamlı
+  const withGeoPending = useMemo(
     () =>
-      rows.filter(
-        (o) => o.geo && typeof o.geo.lat === "number" && typeof o.geo.lng === "number"
+      pending.filter(
+        (o) =>
+          o.geo &&
+          typeof o.geo.lat === "number" &&
+          typeof o.geo.lng === "number"
       ),
-    [rows]
+    [pending]
   );
-  const canBuild = withGeo.length >= 1;
+  const canBuild = withGeoPending.length >= 1;
 
   function openDeliver(o) {
     setSelectedOrder(o);
@@ -83,7 +104,7 @@ export default function DriverHome() {
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold">Driver – Pending Orders</h1>
+        <h1 className="text-2xl font-semibold">Driver – Orders</h1>
 
         <Link
           to="/driver/route"
@@ -95,14 +116,15 @@ export default function DriverHome() {
           onClick={(e) => {
             if (!canBuild) e.preventDefault();
           }}
-          title={canBuild ? "" : "En az 1 adet konumu kayıtlı sipariş gerekli"}
+          title={canBuild ? "" : "En az 1 adet konumu kayıtlı pending sipariş gerekli"}
         >
           Build route
         </Link>
       </div>
 
       <p className="text-xs text-slate-400 mb-3">
-        Pending orders: <b>{rows.length}</b> • with geo: <b>{withGeo.length}</b>
+        All: <b>{rows.length}</b> • Pending: <b>{pending.length}</b> • Delivered: <b>{delivered.length}</b> •
+        &nbsp;Pending with geo: <b>{withGeoPending.length}</b>
       </p>
 
       <div className="overflow-hidden rounded-xl border border-white/10 bg-slate-900/40">
@@ -113,37 +135,47 @@ export default function DriverHome() {
               <Th>Shop</Th>
               <Th>Customer</Th>
               <Th>Total</Th>
+              <Th>Status</Th>
               <Th>Actions</Th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
             {busy && (
               <tr>
-                <Td colSpan={5}>Loading…</Td>
+                <Td colSpan={6}>Loading…</Td>
               </tr>
             )}
             {!busy && rows.length === 0 && (
               <tr>
-                <Td colSpan={5}>No pending orders.</Td>
+                <Td colSpan={6}>No orders.</Td>
               </tr>
             )}
-            {rows.map((o) => (
-              <tr key={o._id} className="hover:bg-white/5">
-                <Td>{fmtDate(o.orderDate)}</Td>
-                <Td>{o.shopName || "—"}</Td>
-                <Td>{o.customerName || "—"}</Td>
-                <Td>{pound(o.totalAmount)}</Td>
-                <Td>
-                  <button
-                    type="button"
-                    className="px-3 py-1.5 rounded-md text-sm bg-emerald-600 hover:bg-emerald-500 text-white"
-                    onClick={() => openDeliver(o)}
-                  >
-                    Complete delivery
-                  </button>
-                </Td>
-              </tr>
-            ))}
+
+            {rows.map((o) => {
+              const isDelivered = (o.status || "").toLowerCase() === "delivered";
+              return (
+                <tr key={o._id} className="hover:bg-white/5">
+                  <Td>{fmtDate(o.orderDate)}</Td>
+                  <Td>{o.shopName || "—"}</Td>
+                  <Td>{o.customerName || "—"}</Td>
+                  <Td>{pound(o.totalAmount)}</Td>
+                  <Td><StatusBadge status={o.status} /></Td>
+                  <Td>
+                    {!isDelivered ? (
+                      <button
+                        type="button"
+                        className="px-3 py-1.5 rounded-md text-sm bg-emerald-600 hover:bg-emerald-500 text-white"
+                        onClick={() => openDeliver(o)}
+                      >
+                        Complete delivery
+                      </button>
+                    ) : (
+                      <span className="text-slate-500 text-sm">—</span>
+                    )}
+                  </Td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -154,7 +186,8 @@ export default function DriverHome() {
         onClose={() => setDeliverOpen(false)}
         order={{
           id: selectedOrder?._id,
-          title: selectedOrder?.shopName || selectedOrder?.customerName || "Order",
+          title:
+            selectedOrder?.shopName || selectedOrder?.customerName || "Order",
           amount: selectedOrder?.totalAmount || 0,
         }}
         onSuccess={afterDelivered}
