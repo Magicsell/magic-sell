@@ -8,7 +8,7 @@ export function StatusBadge({ status }) {
       : "bg-amber-500/15 text-amber-300 ring-1 ring-amber-400/30";
   const label = s === "delivered" ? "Delivered" : "Pending";
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${color}`}>
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${color}`}>
       {label}
     </span>
   );
@@ -26,10 +26,12 @@ export function PaymentBadge({ method }) {
     color = "bg-purple-500/10 text-purple-300 ring-1 ring-purple-400/20";
   else if (lower.includes("bank") || lower.includes("transfer"))
     color = "bg-lime-500/10 text-lime-300 ring-1 ring-lime-400/20";
-  const label = m ? titleCase(m) : "Not Set";
+  const label = m ? titleCase(m) : "Not Set"; 
+  // replace normal spaces with non-breaking spaces so labels like "Bank Transfer" never wrap
+  const nbLabel = String(label).replace(/\s+/g, "\u00A0");
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${color}`}>
-      {label}
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${color}`}>
+      {nbLabel}
     </span>
   );
 }
