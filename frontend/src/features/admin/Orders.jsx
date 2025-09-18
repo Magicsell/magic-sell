@@ -196,7 +196,7 @@ export default function Orders() {
                   <th>Shop</th>
                   <th>Customer</th>
                   <th className="text-right">Total</th>
-                  <th>Payment Method</th>
+                  <th>Payment</th>
                   <th>Status</th>
                   <th className="text-right">Actions</th>
                 </tr>
