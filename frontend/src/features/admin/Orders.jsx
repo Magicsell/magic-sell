@@ -224,45 +224,49 @@ export default function Orders() {
                           <StatusBadge status={o.status} />
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <div className="flex justify-end gap-2">
-                            <button
-                              onClick={() => onEdit(o)}
-                              className="rounded-md border border-slate-700 px-2.5 py-1 text-xs hover:bg-slate-800"
-                              title="Edit order"
-                            >
-                              Edit
-                            </button>
-
-                            {/* View sadece delivered */}
-                            {o.status === "delivered" && (
+                          {/* fixed-slot layout: [Edit] [Middle action: View|Deliver] [Delete] */}
+                          <div className="flex justify-end gap-2 items-center">
+                            <div className="w-14 flex justify-end">
                               <button
-                                onClick={() => openProof(o)}
+                                onClick={() => onEdit(o)}
                                 className="rounded-md border border-slate-700 px-2.5 py-1 text-xs hover:bg-slate-800"
-                                title="View delivery proof"
+                                title="Edit order"
                               >
-                                View
+                                Edit
                               </button>
-                            )}
+                            </div>
 
-                            {o.status !== "delivered" && (
+                            <div className="w-28 flex justify-center">
+                              {/* Middle slot: show View when delivered, otherwise Deliver button */}
+                              {o.status === "delivered" ? (
+                                <button
+                                  onClick={() => openProof(o)}
+                                  className="rounded-md border border-slate-700 px-2.5 py-1 text-xs hover:bg-slate-800"
+                                  title="View delivery proof"
+                                >
+                                  View
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => openDeliver(o)}
+                                  className="px-3 py-1.5 rounded-md text-sm bg-emerald-600 hover:bg-emerald-500 text-white"
+                                >
+                                  Deliver
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="w-14 flex justify-start">
                               <button
-                                onClick={() => openDeliver(o)}
-                                className="inline-flex items-center rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 transition"
+                                onClick={() =>
+                                  handleDelete(o._id, o.status === "delivered")
+                                }
+                                className="rounded-md border border-red-700 text-red-300 px-2.5 py-1 text-xs hover:bg-red-900/40"
+                                title="Delete order"
                               >
-                                Mark delivered
+                                Delete
                               </button>
-                            )}
-
-                            {/* Delete (her durumda görünsün) */}
-                            <button
-                              onClick={() =>
-                                handleDelete(o._id, o.status === "delivered")
-                              }
-                              className="rounded-md border border-red-700 text-red-300 px-2.5 py-1 text-xs hover:bg-red-900/40"
-                              title="Delete order"
-                            >
-                              Delete
-                            </button>
+                            </div>
                           </div>
                         </td>
                       </tr>
