@@ -26,7 +26,22 @@ export default function AdminHome() {
   const totals = data?.totals ?? {};
   const today = data?.today ?? {};
   const weekly = data?.weekly ?? [];
-  const payments = data?.payments ?? [];
+  // aggregate payments by normalized method (case-insensitive) to avoid duplicates
+  const _paymentsRaw = data?.payments ?? [];
+  const _paymentsMap = {};
+  _paymentsRaw.forEach((p) => {
+    const key = (p.method || "Not set").toString().trim().toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(_paymentsMap, key)) {
+      _paymentsMap[key] = {
+        method: (p.method || "Not set").toString().replace(/\b\w/g, (c) => c.toUpperCase()),
+        count: 0,
+        amount: 0,
+      };
+    }
+    _paymentsMap[key].count += Number(p.count || 0);
+    _paymentsMap[key].amount += Number(p.amount || 0);
+  });
+  const payments = Object.values(_paymentsMap);
   const status = data?.status ?? [];
   const topCustomers = (data?.topCustomers ?? []).slice(0, 5);
   const recent = (data?.recentOrders ?? []).slice(0, 6);
