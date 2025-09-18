@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_URL } from "../../lib/config";
 import DeliverModal from "../../components/DeliverModal";
+import { StatusBadge, PaymentBadge } from "../../components/Badges";
 
 /* ---------- küçük yardımcılar ---------- */
 function Th({ children }) {
@@ -36,19 +37,7 @@ function pound(n) {
     maximumFractionDigits: 0,
   }).format(n || 0);
 }
-function StatusBadge({ status }) {
-  const s = (status || "").toLowerCase();
-  const color =
-    s === "delivered"
-      ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-400/30"
-      : "bg-amber-500/15 text-amber-300 ring-1 ring-amber-400/30";
-  const label = s === "delivered" ? "Delivered" : "Pending";
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${color}`}>
-      {label}
-    </span>
-  );
-}
+// using shared StatusBadge from components/Badges
 
 /* ---------- Ana Sayfa ---------- */
 export default function DriverHome() {
@@ -135,6 +124,7 @@ export default function DriverHome() {
               <Th>Shop</Th>
               <Th>Customer</Th>
               <Th>Total</Th>
+              <Th>Payment</Th>
               <Th>Status</Th>
               <Th>Actions</Th>
             </tr>
@@ -159,6 +149,7 @@ export default function DriverHome() {
                   <Td>{o.shopName || "—"}</Td>
                   <Td>{o.customerName || "—"}</Td>
                   <Td>{pound(o.totalAmount)}</Td>
+                  <Td><PaymentBadge method={o.paymentMethod} /></Td>
                   <Td><StatusBadge status={o.status} /></Td>
                   <Td>
                     {!isDelivered ? (

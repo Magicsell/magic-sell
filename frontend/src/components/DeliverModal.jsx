@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { API_URL } from "../lib/config";
 
 export default function DeliverModal({ open, onClose, order, onSuccess }) {
-  const [paymentMethod, setPaymentMethod] = useState("cash");
+  const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [notes, setNotes] = useState("");
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState("");
@@ -12,7 +12,7 @@ export default function DeliverModal({ open, onClose, order, onSuccess }) {
   // modal her açılışta temiz başlasın
   useEffect(() => {
     if (!open) return;
-    setPaymentMethod("cash");
+    setPaymentMethod("Cash");
     setNotes("");
     setFile(null);
     setPreview("");
@@ -99,10 +99,10 @@ export default function DeliverModal({ open, onClose, order, onSuccess }) {
                 onChange={(e) => setPaymentMethod(e.target.value)}
                 className="rounded-lg bg-slate-950 px-3 py-2 ring-1 ring-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                <option value="cash">Cash</option>
-                <option value="card">Card</option>
+                <option value="Cash">Cash</option>
+                <option value="Card">Card</option>
                 <option value="Bank Transfer">Bank Transfer</option>
-                <option value="balance">Balance</option>
+                <option value="Balance">Balance</option>
                 <option value="Not Set">Not Set</option>
               </select>
             </label>

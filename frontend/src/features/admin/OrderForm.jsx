@@ -316,10 +316,10 @@ export default function OrderForm({
             className={SELECT_CLS}
           >
             <option>Not Set</option>
-            <option value="cash">Cash</option>
-            <option value="card">Card</option>
+            <option value="Cash">Cash</option>
+            <option value="Card">Card</option>
             <option value="Bank Transfer">Bank Transfer</option>
-            <option value="balance">Balance</option>
+            <option value="Balance">Balance</option>
           </select>
         </Field>
       </div>

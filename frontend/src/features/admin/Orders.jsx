@@ -4,6 +4,7 @@ import OrderForm from "./OrderForm";
 import OrderProofModal from "../../components/OrderProofModal";
 import DeliveryModal from "../../components/DeliverModal";
 import { API_URL } from "../../lib/config";
+import { StatusBadge, PaymentBadge } from "../../components/Badges";
 
 export default function Orders() {
   const [openNew, setOpenNew] = useState(false);
@@ -188,13 +189,14 @@ export default function Orders() {
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead className="bg-neutral-900/60 text-neutral-300">
+                <thead className="bg-neutral-900/60 text-neutral-300">
                 <tr className="[&>th]:px-4 [&>th]:py-3 [&>th]:font-medium">
                   <th>#</th>
                   <th>Date</th>
                   <th>Shop</th>
                   <th>Customer</th>
                   <th className="text-right">Total</th>
+                  <th>Payment Method</th>
                   <th>Status</th>
                   <th className="text-right">Actions</th>
                 </tr>
@@ -202,74 +204,74 @@ export default function Orders() {
               <tbody className="divide-y divide-neutral-800">
                 {loading && (
                   <tr>
-                    <td colSpan="7" className="px-4 py-10">
+                    <td colSpan="8" className="px-4 py-10">
                       <Skeleton />
                     </td>
                   </tr>
                 )}
 
-                {!loading &&
-                  clientFiltered.map((o) => (
-                    <tr key={o._id} className="hover:bg-neutral-900/40">
-                      <td className="px-4 py-3 font-medium">#{pad(o.orderNo)}</td>
-                      <td className="px-4 py-3">{fmtDate(o.orderDate)}</td>
-                      <td className="px-4 py-3">{o.shopName}</td>
-                      <td className="px-4 py-3">{o.customerName || "—"}</td>
-                      <td className="px-4 py-3 text-right">
-                        £{Number(o.totalAmount || 0).toFixed(0)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={o.status} />
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            onClick={() => onEdit(o)}
-                            className="rounded-md border border-slate-700 px-2.5 py-1 text-xs hover:bg-slate-800"
-                            title="Edit order"
-                          >
-                            Edit
-                          </button>
-
-                          {/* View sadece delivered */}
-                          {o.status === "delivered" && (
+                {!loading && clientFiltered.map((o) => (
+                      <tr key={o._id} className="hover:bg-neutral-900/40">
+                        <td className="px-4 py-3 font-medium">#{pad(o.orderNo)}</td>
+                        <td className="px-4 py-3">{fmtDate(o.orderDate)}</td>
+                        <td className="px-4 py-3">{o.shopName}</td>
+                        <td className="px-4 py-3">{o.customerName || "—"}</td>
+                        <td className="px-4 py-3 text-right">
+                          £{Number(o.totalAmount || 0).toFixed(0)}
+                        </td>
+                        <td className="px-4 py-3"><PaymentBadge method={o.paymentMethod} /></td>
+                        <td className="px-4 py-3">
+                          <StatusBadge status={o.status} />
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex justify-end gap-2">
                             <button
-                              onClick={() => openProof(o)}
+                              onClick={() => onEdit(o)}
                               className="rounded-md border border-slate-700 px-2.5 py-1 text-xs hover:bg-slate-800"
-                              title="View delivery proof"
+                              title="Edit order"
                             >
-                              View
+                              Edit
                             </button>
-                          )}
 
-                          {o.status !== "delivered" && (
+                            {/* View sadece delivered */}
+                            {o.status === "delivered" && (
+                              <button
+                                onClick={() => openProof(o)}
+                                className="rounded-md border border-slate-700 px-2.5 py-1 text-xs hover:bg-slate-800"
+                                title="View delivery proof"
+                              >
+                                View
+                              </button>
+                            )}
+
+                            {o.status !== "delivered" && (
+                              <button
+                                onClick={() => openDeliver(o)}
+                                className="inline-flex items-center rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 transition"
+                              >
+                                Mark delivered
+                              </button>
+                            )}
+
+                            {/* Delete (her durumda görünsün) */}
                             <button
-                              onClick={() => openDeliver(o)}
-                              className="inline-flex items-center rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 transition"
+                              onClick={() =>
+                                handleDelete(o._id, o.status === "delivered")
+                              }
+                              className="rounded-md border border-red-700 text-red-300 px-2.5 py-1 text-xs hover:bg-red-900/40"
+                              title="Delete order"
                             >
-                              Mark delivered
+                              Delete
                             </button>
-                          )}
-
-                          {/* Delete (her durumda görünsün) */}
-                          <button
-                            onClick={() =>
-                              handleDelete(o._id, o.status === "delivered")
-                            }
-                            className="rounded-md border border-red-700 text-red-300 px-2.5 py-1 text-xs hover:bg-red-900/40"
-                            title="Delete order"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
 
                 {!loading && clientFiltered.length === 0 && (
                   <tr>
                     <td
-                      colSpan="7"
+                      colSpan="8"
                       className="px-4 py-10 text-center text-neutral-400"
                     >
                       No data
@@ -359,19 +361,7 @@ function Tab({ active, children, ...p }) {
   );
 }
 
-function StatusBadge({ status }) {
-  const s = (status || "").toLowerCase();
-  const color =
-    s === "delivered"
-      ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-400/30"
-      : "bg-amber-500/15 text-amber-300 ring-1 ring-amber-400/30";
-  const label = s === "delivered" ? "Delivered" : "Pending";
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${color}`}>
-      {label}
-    </span>
-  );
-}
+// using shared Badges component
 function Skeleton() {
   return (
     <div className="space-y-3">

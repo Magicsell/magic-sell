@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_URL } from "../../lib/config";
+import { PaymentBadge } from "../../components/Badges";
 
 export default function AdminHome() {
   const [data, setData] = useState(null);
@@ -105,7 +106,7 @@ export default function AdminHome() {
                 >
                   <div className="flex items-center gap-2">
                     <Dot className={dotByMethod(p.method)} />
-                    <div className="capitalize">{p.method || "Not set"}</div>
+                    <div className="capitalize">{(p.method || "Not set").replace(/\b\w/g, (c) => c.toUpperCase())}</div>
                   </div>
                   <div className="text-sm text-slate-300">
                     {fmtInt(p.count)} • {fmtGBP(p.amount)}
@@ -180,14 +181,15 @@ export default function AdminHome() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-left text-slate-400">
-                  <tr>
-                    <Th>#</Th>
-                    <Th>Date</Th>
-                    <Th>Shop</Th>
-                    <Th>Customer</Th>
-                    <Th>Total</Th>
-                    <Th>Status</Th>
-                  </tr>
+                      <tr>
+                        <Th>#</Th>
+                        <Th>Date</Th>
+                        <Th>Shop</Th>
+                        <Th>Customer</Th>
+                        <Th>Total</Th>
+                        <Th>Payment</Th>
+                        <Th>Status</Th>
+                      </tr>
                 </thead>
                 <tbody>
                   {recent.length === 0 && (
@@ -209,6 +211,7 @@ export default function AdminHome() {
                         {o.customerName || "—"}
                       </Td>
                       <Td>{fmtGBP(o.totalAmount)}</Td>
+                      <Td><PaymentBadge method={o.paymentMethod} /></Td>
                       <Td>
                         <Badge kind={o.status} />
                       </Td>
@@ -363,7 +366,7 @@ function dotByMethod(m) {
 
 function dm(ymd) {
   if (!ymd) return "";
-  const [y, m, d] = String(ymd).split("-");
+  const [_y, m, d] = String(ymd).split("-");
   return `${d}/${m}`;
 }
 
