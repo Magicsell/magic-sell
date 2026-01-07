@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import RouteMap from "../../components/RouteMap";
-import { API_URL } from "../../lib/config";
+import { apiGet, apiPost } from "../../lib/api";
 
 const DEPOT = {
   lat: 50.707088,
@@ -22,28 +22,19 @@ export default function AdminDriverBoard() {
       setErr("");
 
       // 1) Pending siparişlerden, BAŞLANGIÇ = DEPOT olacak şekilde rotayı hesapla
-      const r1 = await fetch(`${API_URL}/api/route/from-orders`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          start: DEPOT,
-          statuses: ["pending"],
-          roundTrip: false,      // istersen true yapıp depoya dönüşü de çizebiliriz
-          serviceMin: 5,
-          avgSpeedKmh: 30,
-          opt: "2opt",
-        }),
+      const computed = await apiPost("/api/route/from-orders", {
+        start: DEPOT,
+        statuses: ["pending"],
+        roundTrip: false,      // istersen true yapıp depoya dönüşü de çizebiliriz
+        serviceMin: 5,
+        avgSpeedKmh: 30,
+        opt: "2opt",
       });
-      if (!r1.ok) throw new Error("Failed to compute route from orders");
-      const computed = await r1.json();
       // start bilgisini de map'e gönderelim
       setRoute({ ...computed, start: DEPOT });
 
       // 2) Bugün teslim edilenler (rozetler için)
-      const r2 = await fetch(
-        `${API_URL}/api/orders?date=today&status=delivered&pageSize=500`
-      );
-      const today = await r2.json();
+      const today = await apiGet("/api/orders?date=today&status=delivered&pageSize=500");
       const deliveredIds =
         (Array.isArray(today?.items) ? today.items : today)?.map((o) => String(o._id)) || [];
       setDeliveredToday(new Set(deliveredIds));

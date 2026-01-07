@@ -75,39 +75,87 @@ export default function RouteMap({ route }) {
     const m = mapRef.current;
     if (!m) return;
 
-    [
-      "route",
-      "route-fallback",
-    ].forEach((src) => m.getSource(src) && m.removeSource(src));
-
+    // First remove layers (they depend on sources)
     [
       "route-line",
       "route-casing",
       "route-fallback-line",
       "route-fallback-casing",
-    ].forEach((id) => m.getLayer(id) && m.removeLayer(id));
+    ].forEach((id) => {
+      if (m.getLayer(id)) {
+        try {
+          m.removeLayer(id);
+        } catch (e) {
+          console.warn(`Failed to remove layer ${id}:`, e);
+        }
+      }
+    });
 
-    markersRef.current.forEach((mrk) => mrk.remove());
+    // Then remove sources (after layers are gone)
+    [
+      "route",
+      "route-fallback",
+    ].forEach((src) => {
+      if (m.getSource(src)) {
+        try {
+          m.removeSource(src);
+        } catch (e) {
+          console.warn(`Failed to remove source ${src}:`, e);
+        }
+      }
+    });
+
+    // Remove markers
+    markersRef.current.forEach((mrk) => {
+      try {
+        mrk.remove();
+      } catch (e) {
+        console.warn("Failed to remove marker:", e);
+      }
+    });
     markersRef.current = [];
   }
 
  function addMarker(p, idx) {
   const el = document.createElement("div");
-  el.style.cssText = `
-    width:28px;height:28px;border-radius:50%;
-    background:${p.isStart ? "#0b1220" : "#0a0f1a"};
-    border:2px solid ${p.isStart ? "#60a5fa" : "#22c55e"};
-    color:#e5fff1;display:flex;align-items:center;justify-content:center;
-    font-size:12px;font-weight:700;box-shadow:0 0 0 2px rgba(34,197,94,.25);
-  `;
-  el.innerText = p.isStart ? "S" : String(idx); // start = S, duraklar 1..n
+  const isStart = p.isStart === true;
+  
+  // Start marker için daha büyük ve belirgin stil
+  if (isStart) {
+    el.style.cssText = `
+      width:36px;height:36px;border-radius:50%;
+      background:#1e40af;
+      border:3px solid #60a5fa;
+      color:#ffffff;display:flex;align-items:center;justify-content:center;
+      font-size:14px;font-weight:900;
+      box-shadow:0 0 0 3px rgba(96,165,250,.4), 0 2px 8px rgba(0,0,0,.3);
+      z-index:1000;
+      position:relative;
+    `;
+    el.innerText = "S";
+  } else {
+    el.style.cssText = `
+      width:28px;height:28px;border-radius:50%;
+      background:#0a0f1a;
+      border:2px solid #22c55e;
+      color:#e5fff1;display:flex;align-items:center;justify-content:center;
+      font-size:12px;font-weight:700;
+      box-shadow:0 0 0 2px rgba(34,197,94,.25);
+      z-index:999;
+      position:relative;
+    `;
+    el.innerText = String(idx);
+  }
 
-  const title   = escapeHtml(p.name || (p.isStart ? "Depot" : "Stop"));
+  const title   = escapeHtml(p.name || (isStart ? "Depot" : "Stop"));
   const addr    = escapeHtml(p.address || "");
   const postc   = escapeHtml((p.postcode || "").toUpperCase());
   const line2   = [addr, postc].filter(Boolean).join(", ");
 
-  const m = new mapboxgl.Marker({ element: el })
+  const m = new mapboxgl.Marker({ 
+    element: el,
+    anchor: 'center'
+  })
     .setLngLat([p.lng, p.lat])
     .setPopup(
       new mapboxgl.Popup({ offset: 12 }).setHTML(`
@@ -122,6 +170,11 @@ export default function RouteMap({ route }) {
     .addTo(mapRef.current);
 
   markersRef.current.push(m);
+  
+  // Debug log
+  if (isStart) {
+    console.log("[RouteMap] Added START marker at:", p.lat, p.lng);
+  }
 }
 
 
@@ -132,8 +185,22 @@ export default function RouteMap({ route }) {
     clearAll();
     if (points.length < 1) return;
 
-    // markers: ilk nokta start, kalanlar 1..n numaralı
-    points.forEach((p, i) => addMarker(p, p.isStart ? "S" : i));
+    console.log("[RouteMap] Rendering markers, points count:", points.length);
+    console.log("[RouteMap] Points:", points.map(p => ({ name: p.name, isStart: p.isStart, lat: p.lat, lng: p.lng })));
+    console.log("[RouteMap] Route start:", route?.start);
+
+    // markers: ilk nokta start (S), kalanlar 1..n numaralı
+    points.forEach((p, i) => {
+      if (p.isStart) {
+        console.log("[RouteMap] Adding START marker at index", i, "lat:", p.lat, "lng:", p.lng);
+        addMarker(p, "S");
+      } else {
+        // Skip start point when numbering stops (stops start from 1)
+        const stopNumber = points[0]?.isStart ? i : i + 1;
+        console.log("[RouteMap] Adding stop marker", stopNumber, "at index", i);
+        addMarker(p, stopNumber);
+      }
+    });
 
     // bounds
     const bounds = new mapboxgl.LngLatBounds();

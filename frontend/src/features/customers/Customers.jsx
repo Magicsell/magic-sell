@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { API_URL } from "../../lib/config";
+import { listCustomers, deleteCustomer, createCustomer, updateCustomer } from "./api";
 
 /* ==== UK validators & formatters (shared) ==== */
 const UK_POSTCODE_RE =
@@ -61,11 +61,7 @@ export default function Customers() {
     setBusy(true);
     setErr("");
     try {
-      const url = q
-        ? `${API_URL}/api/customers?q=${encodeURIComponent(q)}`
-        : `${API_URL}/api/customers`;
-      const r = await fetch(url);
-      const d = await r.json();
+      const d = await listCustomers(q);
       setAll(Array.isArray(d) ? d : d.items ?? []);
     } catch (e) {
       setErr("Customers could not be loaded");
@@ -101,10 +97,7 @@ export default function Customers() {
   async function onDelete(c) {
     if (!window.confirm(`Delete customer "${c.shopName || c.name}"?`)) return;
     try {
-      const r = await fetch(`${API_URL}/api/customers/${c._id}`, {
-        method: "DELETE",
-      });
-      if (!r.ok) throw new Error("Delete failed");
+      await deleteCustomer(c._id);
       await load();
     } catch (e) {
       alert(e.message || "Delete failed");
@@ -264,12 +257,7 @@ function AddCustomerModal({ onClose, onSaved }) {
         address: emptyToNull(form.address),
       };
 
-      const res = await fetch(`${API_URL}/api/customers`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error("Create failed");
+      await createCustomer(payload);
       onSaved?.();
     } catch (e) {
       setErr(e.message || "Error");
@@ -366,12 +354,7 @@ function EditCustomerModal({ initial, onClose, onSaved }) {
         address: emptyToNull(form.address),
       };
 
-      const res = await fetch(`${API_URL}/api/customers/${initial._id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error("Update failed");
+      await updateCustomer(initial._id, payload);
       onSaved?.();
     } catch (e) {
       setErr(e.message || "Error");

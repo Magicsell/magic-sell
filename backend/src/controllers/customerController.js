@@ -1,9 +1,15 @@
 import { Customer } from "../models/Customer.js";
 import { geocodeUK } from "../utils/geocode.js";
 
-export const getCustomers = async (_req, res) => {
+export const getCustomers = async (req, res) => {
   try {
-    const rows = await Customer.find().sort({ createdAt: -1 });
+    // Tenant filter
+    const query = {};
+    if (req.organizationId) {
+      query.organizationId = req.organizationId;
+    }
+
+    const rows = await Customer.find(query).sort({ createdAt: -1 });
     res.json(rows);
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -32,6 +38,7 @@ export const createCustomer = async (req, res) => {
     }
 
     const doc = {
+      organizationId: req.organizationId || b.organizationId, // Tenant support
       shopName: b.shopName.trim(),
       name: b.name ?? b.customerName ?? null,
       phone: b.phone ?? null,
@@ -53,7 +60,13 @@ export const createCustomer = async (req, res) => {
 };
 export const getCustomerById = async (req, res) => {
   try {
-    const row = await Customer.findById(req.params.id);
+    // Tenant filter
+    const query = { _id: req.params.id };
+    if (req.organizationId) {
+      query.organizationId = req.organizationId;
+    }
+
+    const row = await Customer.findOne(query);
     if (!row) return res.status(404).json({ message: "Customer not found" });
     res.json(row);
   } catch (e) {
@@ -80,7 +93,13 @@ export const updateCustomer = async (req, res) => {
       if (geo) update.geo = geo;
     }
 
-    const saved = await Customer.findByIdAndUpdate(id, update, { new: true });
+    // Tenant filter
+    const query = { _id: id };
+    if (req.organizationId) {
+      query.organizationId = req.organizationId;
+    }
+
+    const saved = await Customer.findOneAndUpdate(query, update, { new: true });
     if (!saved) return res.status(404).json({ message: "Customer not found" });
     return res.json(saved);
   } catch (e) {
@@ -90,7 +109,13 @@ export const updateCustomer = async (req, res) => {
 
 export const deleteCustomer = async (req, res) => {
   try {
-    const row = await Customer.findByIdAndDelete(req.params.id);
+    // Tenant filter
+    const query = { _id: req.params.id };
+    if (req.organizationId) {
+      query.organizationId = req.organizationId;
+    }
+
+    const row = await Customer.findOneAndDelete(query);
     if (!row) return res.status(404).json({ message: "Customer not found" });
     res.status(204).send(); // no content
   } catch (e) {

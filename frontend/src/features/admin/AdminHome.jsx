@@ -1,27 +1,29 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { API_URL } from "../../lib/config";
+import { apiGet } from "../../lib/api";
 import { PaymentBadge } from "../../components/Badges";
+import { API_URL } from "../../lib/config";
+import { TrendingUp, Package, Tag } from "lucide-react";
 
 export default function AdminHome() {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [periodFilter, setPeriodFilter] = useState("7d"); // 7d, 14d, 3m
 
   useEffect(() => {
     (async () => {
       try {
         setBusy(true);
-        const r = await fetch(`${API_URL}/api/analytics/summary`);
-        if (!r.ok) throw new Error("Analytics fetch failed");
-        setData(await r.json());
+        const data = await apiGet(`/api/analytics/summary?period=${periodFilter}`);
+        setData(data);
       } catch (e) {
         setErr(e.message || "Error");
       } finally {
         setBusy(false);
       }
     })();
-  }, []);
+  }, [periodFilter]);
 
   const totals = data?.totals ?? {};
   const today = data?.today ?? {};
@@ -45,22 +47,15 @@ export default function AdminHome() {
   const status = data?.status ?? [];
   const topCustomers = (data?.topCustomers ?? []).slice(0, 5);
   const recent = (data?.recentOrders ?? []).slice(0, 6);
+  const topProducts = (data?.topProducts ?? []).slice(0, 5);
+  const topCategories = (data?.topCategories ?? []).slice(0, 5);
+  const recentProducts = (data?.recentProducts ?? []).slice(0, 5);
 
   return (
-    <div className="min-h-screen text-slate-100 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+    <div className="text-slate-100">
       {/* Header */}
-      <div className="mx-auto max-w-6xl px-4 pt-8">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <div className="flex gap-2">
-            <Link
-              to="/admin/orders"
-              className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium hover:bg-emerald-500"
-            >
-              Go to Orders
-            </Link>
-          </div>
-        </div>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
 
         {/* KPIs */}
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -68,6 +63,14 @@ export default function AdminHome() {
           <Kpi title="Total Customers" value={fmtInt(totals.totalCustomers)} />
           <Kpi title="Total Revenue" value={fmtGBP(totals.revenue)} />
           <Kpi title="Avg Order Value" value={fmtGBP(totals.avgOrderValue)} />
+        </div>
+
+        {/* Product KPIs */}
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Kpi title="Total Products" value={fmtInt(totals.totalProducts || 0)} />
+          <Kpi title="Active Products" value={fmtInt(totals.activeProducts || 0)} />
+          <Kpi title="Low Stock" value={fmtInt(totals.lowStockProducts || 0)} />
+          <Kpi title="Categories" value={fmtInt(totals.totalCategories || 0)} />
         </div>
 
         {/* Today + Weekly */}
@@ -94,19 +97,36 @@ export default function AdminHome() {
 
           <Card className="lg:col-span-2">
             <div className="mb-2 flex items-center justify-between">
-              <div className="font-medium">Last 7 days</div>
-              <div className="text-xs text-slate-400">revenue (£)</div>
+              <div className="font-medium">Revenue Chart</div>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/50 p-0.5">
+                  {["7d", "14d", "3m"].map((period) => (
+                    <button
+                      key={period}
+                      onClick={() => setPeriodFilter(period)}
+                      className={`px-2 py-1 text-xs rounded transition-colors ${
+                        periodFilter === period
+                          ? "bg-sky-600/80 text-white"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      {period}
+                    </button>
+                  ))}
+                </div>
+                <div className="text-xs text-slate-400">revenue (£)</div>
+              </div>
             </div>
 
             <TinyBars
-               data={weekly || []}
+              data={weekly || []}
               getValue={(d) => Number(d?.revenue || 0)}
               label={(d) => d?.date}
             />
           </Card>
         </div>
 
-        {/* Breakdown */}
+        {/* Breakdown - Row 1 */}
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <Card>
             <div className="font-medium mb-3">Payment Methods</div>
@@ -174,6 +194,102 @@ export default function AdminHome() {
                   <div className="truncate">{c.customerName || "—"}</div>
                   <div className="text-sm text-slate-300">
                     {fmtInt(c.orders)} • {fmtGBP(c.revenue)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
+
+        {/* Products & Categories - Row 2 */}
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <Card>
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-sky-400" />
+                <div className="font-medium">Top Products</div>
+              </div>
+              <Link
+                to="/admin/products"
+                className="text-xs text-sky-400 hover:text-sky-300"
+              >
+                view all →
+              </Link>
+            </div>
+            <ul className="space-y-2.5">
+              {topProducts.length === 0 && (
+                <li className="text-sm text-slate-400 py-2">No data</li>
+              )}
+              {topProducts.map((p, i) => (
+                <li
+                  key={p.productId || i}
+                  className="flex items-start justify-between gap-2 p-2 rounded-lg hover:bg-slate-800/30 transition-colors"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-slate-200 truncate">{p.productName || "—"}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{fmtInt(p.orderCount)} orders • {fmtGBP(p.totalRevenue)}</div>
+                  </div>
+                  <div className="text-sm font-semibold text-sky-400 flex-shrink-0">
+                    {fmtInt(p.totalQuantity)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Card>
+
+          <Card>
+            <div className="mb-3 flex items-center gap-2">
+              <Tag className="w-4 h-4 text-sky-400" />
+              <div className="font-medium">Top Categories</div>
+            </div>
+            <ul className="space-y-2.5">
+              {topCategories.length === 0 && (
+                <li className="text-sm text-slate-400 py-2">No data</li>
+              )}
+              {topCategories.map((cat, i) => (
+                <li
+                  key={cat.category || i}
+                  className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-800/30 transition-colors"
+                >
+                  <div className="truncate text-sm text-slate-200">{cat.category || "—"}</div>
+                  <div className="text-sm font-semibold text-sky-400 ml-2 flex-shrink-0">
+                    {fmtGBP(cat.totalRevenue)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Card>
+
+          <Card>
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Package className="w-4 h-4 text-sky-400" />
+                <div className="font-medium">Recent Products</div>
+              </div>
+              <Link
+                to="/admin/products"
+                className="text-xs text-sky-400 hover:text-sky-300"
+              >
+                view all →
+              </Link>
+            </div>
+            <ul className="space-y-2.5">
+              {recentProducts.length === 0 && (
+                <li className="text-sm text-slate-400 py-2">No data</li>
+              )}
+              {recentProducts.map((p, i) => (
+                <li
+                  key={p._id || i}
+                  className="flex items-start justify-between gap-2 p-2 rounded-lg hover:bg-slate-800/30 transition-colors"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-slate-200 truncate">{p.name || "—"}</div>
+                    {p.category && (
+                      <div className="text-xs text-slate-500 mt-0.5">{p.category}</div>
+                    )}
+                  </div>
+                  <div className="text-sm font-semibold text-sky-400 ml-2 flex-shrink-0">
+                    {fmtGBP(p.price || 0)}
                   </div>
                 </li>
               ))}
@@ -302,8 +418,8 @@ function TinyBars({ data = [] }) {
                 <div className="w-full bg-emerald-500 rounded-md" style={{ height: h }} />
               </div>
 
-              {/* Tarih (GG/AA) */}
-              <div className="text-[11px] text-slate-400">{dm(r?.date)}</div>
+              {/* Tarih (GG/AA veya WXX) */}
+              <div className="text-[11px] text-slate-400">{r?.label || dm(r?.date)}</div>
             </div>
           );
         })}

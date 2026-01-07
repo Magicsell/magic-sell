@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState, useCallback } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import RouteMap from "../../components/RouteMap";
-import { API_URL } from "../../lib/config";
+import { apiGet, apiPost } from "../../lib/api";
 import { getUser } from "../auth/auth";
 import DeliverModal from "../../components/DeliverModal";
+import { MapPin, Navigation, RefreshCw, CheckCircle, ExternalLink } from "lucide-react";
+import Breadcrumb from "../../components/Breadcrumb";
 
 const DEPOT = {
   lat: 50.707088,
@@ -37,69 +39,91 @@ function toMapsDestination(stop) {
 }
 
 export default function RoutePlanner() {
-  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [loading, setLoading] = useState(true);
   const [route, setRoute] = useState(null);
   const [err, setErr] = useState("");
   const [withGeo, setWithGeo] = useState(0);
 
-  // ortak modal state
+  // Modal state
   const [deliverOpen, setDeliverOpen] = useState(false);
   const [deliverStop, setDeliverStop] = useState(null);
 
-  useEffect(() => {
-    fetchWithGeoCount();
-  }, []);
-
-  async function publishRoute() {
-    if (!route?.stops?.length) return;
-    const user = getUser();
-    const driver = user?.username || user?.role || "driver";
-    try {
-      const r = await fetch(`${API_URL}/api/route/active`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ driver, ...route }),
-      });
-      if (!r.ok) throw new Error("Failed to publish route");
-      alert("Route published for admin 👍");
-    } catch (e) {
-      alert(e.message || "Publish failed");
-    }
-  }
+  // Get order IDs from query params
+  const orderIdsParam = searchParams.get("orderIds");
+  const selectedOrderIds = orderIdsParam
+    ? orderIdsParam.split(",").filter(Boolean)
+    : null;
 
   async function fetchWithGeoCount() {
     try {
-      const r = await fetch(
-        `${API_URL}/api/orders?pageSize=1&status=pending&withGeo=1`
-      );
-      const d = await r.json();
+      const d = await apiGet("/api/orders?pageSize=1&status=pending&withGeo=1");
       setWithGeo(d?.total || 0);
     } catch {}
   }
 
-  async function build() {
+  // Build function - only depends on orderIdsParam string to prevent infinite loops
+  const build = useCallback(async () => {
     setErr("");
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/route/from-orders`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          start: DEPOT, // Bournemouth depot
-          statuses: ["pending"],
-          roundTrip: false, // depoya dönüş istersen true
-          serviceMin: 5,
-          avgSpeedKmh: 30,
-          opt: "2opt",
-        }),
+      const requestBody = {
+        start: DEPOT,
+        statuses: ["pending"],
+        roundTrip: false,
+        serviceMin: 5,
+        avgSpeedKmh: 30,
+        opt: "2opt",
+      };
+
+      // Parse order IDs from query param if provided
+      const orderIds = orderIdsParam
+        ? orderIdsParam.split(",").filter(Boolean)
+        : null;
+
+      // Add order IDs if provided
+      if (orderIds && orderIds.length > 0) {
+        requestBody.orderIds = orderIds;
+        console.log("[RoutePlanner] Building route with orderIds:", orderIds);
+        console.log("[RoutePlanner] Request body:", JSON.stringify(requestBody, null, 2));
+      } else {
+        console.log("[RoutePlanner] Building route with all pending orders");
+      }
+
+      const data = await apiPost("/api/route/from-orders", requestBody);
+      console.log("[RoutePlanner] Received route data, stops count:", data?.stops?.length || 0);
+      console.log("[RoutePlanner] Route stops:", data?.stops?.map(s => ({ id: s.id, name: s.name })));
+      console.log("[RoutePlanner] Setting route with DEPOT:", DEPOT);
+      const routeWithStart = { ...data, start: DEPOT };
+      console.log("[RoutePlanner] Final route object:", { 
+        start: routeWithStart.start, 
+        stopsCount: routeWithStart.stops?.length,
+        stops: routeWithStart.stops?.map(s => ({ name: s.name, lat: s.lat, lng: s.lng }))
       });
-      if (!res.ok) throw new Error(`Route API ${res.status}`);
-      const data = await res.json();
-      setRoute({ ...data, start: DEPOT });
+      setRoute(routeWithStart);
     } catch (e) {
-      setErr(e.message);
+      setErr(e.message || "Failed to build route");
     } finally {
       setLoading(false);
+    }
+  }, [orderIdsParam]); // Only depend on orderIdsParam string, not the array
+
+  // Auto-build route on mount and when orderIds change
+  useEffect(() => {
+    build();
+    fetchWithGeoCount();
+  }, [build]);
+
+  async function publishRoute() {
+    if (!route?.stops?.length) return;
+    const user = getUser();
+    const driver = user?.email || user?.role || "driver";
+    try {
+      await apiPost("/api/route/active", { driver, ...route });
+      alert("Route published for admin 👍");
+    } catch (e) {
+      alert(e.message || "Publish failed");
     }
   }
 
@@ -107,69 +131,115 @@ export default function RoutePlanner() {
     setDeliverStop(stop);
     setDeliverOpen(true);
   }
+
   async function afterDelivered() {
     setDeliverOpen(false);
     setDeliverStop(null);
-    await build();
-    await fetchWithGeoCount();
+    // Navigate to driver dashboard after successful delivery
+    navigate("/driver");
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Route Planner</h1>
-        <Link to="/driver" className="text-sm underline text-slate-300">
-          Back to Driver
-        </Link>
+    <div className="max-w-6xl mx-auto">
+      <Breadcrumb
+        items={[
+          { label: "Driver Dashboard", path: "/driver" },
+          { label: "Route Planner" },
+        ]}
+        actionButton={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={build}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/50 text-slate-300 text-sm font-medium hover:bg-slate-800 transition-colors border border-slate-700"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+            {route?.stops?.length > 0 && (
+              <button
+                onClick={publishRoute}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600/80 hover:bg-sky-600 text-white text-sm font-medium transition-colors"
+              >
+                <Navigation className="w-4 h-4" />
+                Publish Route
+              </button>
+            )}
+          </div>
+        }
+      />
+
+      <h1 className="text-2xl font-bold text-slate-100 mb-6">Route Planner</h1>
+
+      {/* Info */}
+      <div className="mb-6 rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+        <div className="flex items-center gap-2 text-sm text-slate-300">
+          <MapPin className="w-4 h-4 text-slate-400" />
+          <span>
+            {selectedOrderIds && selectedOrderIds.length > 0 ? (
+              <>
+                Building route for <span className="font-medium text-white">{selectedOrderIds.length}</span> selected order{selectedOrderIds.length !== 1 ? "s" : ""}
+              </>
+            ) : (
+              <>
+                Pending orders with location: <span className="font-medium text-white">{withGeo}</span>
+              </>
+            )}
+          </span>
+        </div>
       </div>
 
-      <div className="mt-2 text-sm text-slate-400">
-        Pending orders with geo:{" "}
-        <span className="text-slate-200 font-medium">{withGeo}</span>
-      </div>
-
-      <button
-        onClick={build}
-        disabled={loading}
-        className="mt-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium disabled:opacity-60"
-      >
-        {loading ? "Building…" : "Build optimal route"}
-      </button>
+      {loading && (
+        <div className="text-center text-slate-400 py-12">
+          <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-2 text-slate-400" />
+          <div>Building optimal route...</div>
+        </div>
+      )}
 
       {err && (
-        <div className="mt-4 rounded-lg bg-red-500/10 text-red-300 px-3 py-2 text-sm border border-red-500/30">
+        <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/15 text-red-300 px-4 py-3 text-sm">
           {err}
         </div>
       )}
 
-      {route?.stops?.length > 0 && (
-        <div className="mt-6 space-y-6">
-          <div className="rounded-xl border border-slate-800">
-            <div className="px-4 py-3 border-b border-slate-800 font-medium flex items-center justify-between">
-              <span>Route summary</span>
-              <button
-                onClick={publishRoute}
-                className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
-                title="Publish this route for admin"
-              >
-                Publish route
-              </button>
+      {!loading && route?.stops?.length > 0 && (
+        <div className="space-y-6">
+          {/* Route Summary */}
+          <div className="rounded-xl border border-slate-800 overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-800 bg-slate-800/50 flex items-center justify-between">
+              <span className="font-semibold text-slate-200">Route Summary</span>
             </div>
-
-            <div className="px-4 py-3 text-sm text-slate-300">
-              Start: <b>Bournemouth depot</b> • Method: {route.method} • Total
-              distance: <b>{route.totalDistanceKm} km</b> • Drive:{" "}
-              <b>{route.totalDriveMinutes} min</b> • Service:{" "}
-              <b>{route.totalServiceMinutes} min</b>
-            </div>
-            <div className="px-4 pb-4">
-              <RouteMap route={route} />
+            <div className="px-4 py-4 space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                <div>
+                  <div className="text-xs text-slate-400 mb-1">Start</div>
+                  <div className="font-medium text-slate-200">Bournemouth Depot</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400 mb-1">Method</div>
+                  <div className="font-medium text-slate-200">{route.method || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400 mb-1">Total Distance</div>
+                  <div className="font-medium text-slate-200">{route.totalDistanceKm?.toFixed(1) || "—"} km</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400 mb-1">Total Time</div>
+                  <div className="font-medium text-slate-200">
+                    {route.totalDriveMinutes ? `${route.totalDriveMinutes} min` : "—"}
+                  </div>
+                </div>
+              </div>
+              <div className="pt-2">
+                <RouteMap route={route} />
+              </div>
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-800">
-            <div className="px-4 py-3 border-b border-slate-800 font-medium">
-              Stops
+          {/* Stops Table */}
+          <div className="rounded-xl border border-slate-800 overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-800 bg-slate-800/50">
+              <span className="font-semibold text-slate-200">Stops ({route.stops.length + 1})</span>
             </div>
             <div className="px-4 py-2 overflow-x-auto">
               <table className="min-w-full text-sm">
@@ -178,14 +248,41 @@ export default function RoutePlanner() {
                     <th className="py-2 text-left w-10">#</th>
                     <th className="py-2 text-left">Stop</th>
                     <th className="py-2 text-left">Address</th>
-                    <th className="py-2 text-left">From prev (km/min)</th>
-                    <th className="py-2 text-left">ETA (min)</th>
+                    <th className="py-2 text-left">Distance</th>
+                    <th className="py-2 text-left">ETA</th>
                     <th className="py-2 text-left">Amount</th>
                     <th className="py-2 text-left">Maps</th>
                     <th className="py-2 text-left">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="text-slate-200">
+                  {/* Start (Depot) Row */}
+                  <tr className="border-t border-slate-800 hover:bg-slate-800/30 transition-colors bg-slate-800/20">
+                    <td className="py-3 font-medium">0</td>
+                    <td className="py-3 font-medium text-sky-300">Bournemouth Depot</td>
+                    <td className="py-3 text-slate-400">{DEPOT.postcode || "—"}</td>
+                    <td className="py-3 text-slate-400">—</td>
+                    <td className="py-3">0 min</td>
+                    <td className="py-3 font-medium">—</td>
+                    <td className="py-3">
+                      <a
+                        href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(DEPOT.postcode)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors"
+                        title="Open in Google Maps"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        Go
+                      </a>
+                    </td>
+                    <td className="py-3">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700/50 text-slate-400 text-sm">
+                        Start
+                      </span>
+                    </td>
+                  </tr>
+                  {/* Order Stops */}
                   {route.stops.map((s, i) => {
                     const destination = toMapsDestination(s);
                     const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(
@@ -194,38 +291,35 @@ export default function RoutePlanner() {
                     return (
                       <tr
                         key={s.id || s.orderId || i}
-                        className="border-t border-slate-800"
+                        className="border-t border-slate-800 hover:bg-slate-800/30 transition-colors"
                       >
-                        <td className="py-2">{i + 1}</td>
-                        <td className="py-2 font-medium">{s.name}</td>
-                        <td className="py-2 text-slate-400">
-                          {s.address || "—"}
+                        <td className="py-3 font-medium">{i + 1}</td>
+                        <td className="py-3 font-medium">{s.name}</td>
+                        <td className="py-3 text-slate-400">{s.address || "—"}</td>
+                        <td className="py-3 text-slate-400">
+                          {s.distanceFromPrevKm?.toFixed(1) || "—"} km / {s.driveMinutesFromPrev || "—"} min
                         </td>
-                        <td className="py-2">
-                          {s.distanceFromPrevKm} km / {s.driveMinutesFromPrev} min
-                        </td>
-                        <td className="py-2">{s.etaMinutes}</td>
-                        <td className="py-2">{money(s.amount)}</td>
-                        <td className="py-2">
+                        <td className="py-3">{s.etaMinutes || "—"} min</td>
+                        <td className="py-3 font-medium">{money(s.amount)}</td>
+                        <td className="py-3">
                           <a
-                            className="text-indigo-400 underline"
                             href={mapsUrl}
                             target="_blank"
                             rel="noreferrer"
-                            title="Open in Google Maps (directions)"
+                            className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors"
+                            title="Open in Google Maps"
                           >
+                            <ExternalLink className="w-4 h-4" />
                             Go
                           </a>
                         </td>
-                        <td className="py-2">
+                        <td className="py-3">
                           <button
-                            onClick={() => {
-                              setDeliverStop(s);
-                              setDeliverOpen(true);
-                            }}
-                            className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-xs font-medium"
+                            onClick={() => openDeliver(s)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/80 hover:bg-emerald-600 text-white text-sm font-medium transition-colors"
                           >
-                            Complete delivery
+                            <CheckCircle className="w-4 h-4" />
+                            Complete
                           </button>
                         </td>
                       </tr>
@@ -238,6 +332,18 @@ export default function RoutePlanner() {
         </div>
       )}
 
+      {!loading && (!route?.stops || route.stops.length === 0) && !err && (
+        <div className="text-center text-slate-400 py-12">
+          <MapPin className="w-12 h-12 mx-auto mb-3 text-slate-500" />
+          <div className="text-lg font-medium mb-2">No route available</div>
+          <div className="text-sm">
+            {selectedOrderIds && selectedOrderIds.length > 0
+              ? "Selected orders do not have valid locations."
+              : "No pending orders with location found."}
+          </div>
+        </div>
+      )}
+
       <DeliverModal
         open={deliverOpen}
         onClose={() => setDeliverOpen(false)}
@@ -245,6 +351,13 @@ export default function RoutePlanner() {
           id: deliverStop?.orderId || deliverStop?.id || deliverStop?._id,
           title: deliverStop?.name,
           amount: deliverStop?.amount || 0,
+          paymentMethod: deliverStop?.paymentMethod || "Not Set",
+          paymentBreakdown: deliverStop?.paymentBreakdown || {
+            balanceAmount: 0,
+            cashAmount: 0,
+            cardAmount: 0,
+            bankAmount: 0,
+          },
         }}
         onSuccess={afterDelivered}
       />

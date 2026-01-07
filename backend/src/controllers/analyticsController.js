@@ -1,6 +1,7 @@
 // src/controllers/analyticsController.js
 import { Order } from "../models/Order.js";
 import { Customer } from "../models/Customer.js";
+import { Product } from "../models/Product.js";
 
 const TZ_DEFAULT = "Europe/London";
 
@@ -21,15 +22,47 @@ function todayYMD(tz = TZ_DEFAULT) {
   return ymdOf(new Date(), tz);
 }
 
+// Get ISO week number
+function getISOWeek(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+}
+
 export const getSummary = async (req, res) => {
   try {
     const tz = req.query.tz || TZ_DEFAULT;
+    const period = req.query.period || "7d"; // 7d, 14d, 3m, 6m
     const todayStr = todayYMD(tz); // e.g. "2025-09-01"
+
+    // Period configuration
+    let days, groupBy, dateFormat, labelFormat;
+    if (period === "7d" || period === "14d") {
+      days = period === "7d" ? 7 : 14;
+      groupBy = "day";
+      dateFormat = "%Y-%m-%d";
+      labelFormat = "%d/%m";
+    } else {
+      // Monthly periods - use weekly aggregation
+      const monthMap = { "3m": 3, "6m": 6 };
+      days = (monthMap[period] || 3) * 30;
+      groupBy = "week";
+      dateFormat = "%Y-W%V"; // ISO week format
+      labelFormat = "W%V"; // Week number
+    }
 
     // Aggregation helper
     const dayStr = {
-      $dateToString: { date: "$orderDate", format: "%Y-%m-%d", timezone: tz },
+      $dateToString: { date: "$orderDate", format: dateFormat, timezone: tz },
     };
+
+    // Tenant filter - base match
+    const baseMatch = {};
+    if (req.organizationId) {
+      baseMatch.organizationId = req.organizationId;
+    }
 
     const [
       // delivered totals (revenue + delivered sayısı)
@@ -54,9 +87,20 @@ export const getSummary = async (req, res) => {
       recentOrders,
       // total customers
       totalCustomers,
+      // product statistics
+      totalProducts,
+      activeProducts,
+      lowStockProducts,
+      totalCategories,
+      // top products by quantity sold
+      topProductsByQuantity,
+      // top categories by revenue
+      topCategoriesByRevenue,
+      // recent products
+      recentProducts,
     ] = await Promise.all([
       Order.aggregate([
-        { $match: { status: "delivered" } },
+        { $match: { ...baseMatch, status: "delivered" } },
         {
           $group: {
             _id: null,
@@ -66,16 +110,17 @@ export const getSummary = async (req, res) => {
         },
       ]),
 
-      Order.countDocuments(),
+      Order.countDocuments(baseMatch),
 
       Order.aggregate([
-        { $match: { $expr: { $eq: [dayStr, todayStr] } } }, // today (all)
+        { $match: { ...baseMatch, $expr: { $eq: [dayStr, todayStr] } } }, // today (all)
         { $count: "orders" },
       ]),
 
       Order.aggregate([
         {
           $match: {
+            ...baseMatch,
             status: "delivered",
             $expr: { $eq: [dayStr, todayStr] }, // today delivered
           },
@@ -90,7 +135,7 @@ export const getSummary = async (req, res) => {
       ]),
 
       Order.aggregate([
-        { $match: { status: "delivered" } },
+        { $match: { ...baseMatch, status: "delivered" } },
         {
           $group: {
             _id: "$paymentMethod",
@@ -103,13 +148,22 @@ export const getSummary = async (req, res) => {
       ]),
 
       Order.aggregate([
+        { $match: baseMatch },
         { $group: { _id: "$status", count: { $sum: 1 } } },
         { $project: { _id: 0, status: "$_id", count: 1 } },
       ]),
 
-      // weekly delivered – gün bazında
+      // weekly delivered – gün bazında (son N gün)
       Order.aggregate([
-        { $match: { status: "delivered" } },
+        {
+          $match: {
+            ...baseMatch,
+            status: "delivered",
+            orderDate: {
+              $gte: new Date(Date.now() - (days * 24 * 60 * 60 * 1000)), // Son N gün
+            },
+          },
+        },
         {
           $group: {
             _id: dayStr,
@@ -122,7 +176,7 @@ export const getSummary = async (req, res) => {
 
       // top shop – revenue alanıyla
       Order.aggregate([
-        { $match: { status: "delivered" } },
+        { $match: { ...baseMatch, status: "delivered" } },
         {
           $group: {
             _id: "$shopName",
@@ -137,7 +191,7 @@ export const getSummary = async (req, res) => {
 
       // top shops – frontend bozulmasın diye `customerName` alanına shop adını yazıyoruz
       Order.aggregate([
-        { $match: { status: "delivered" } },
+        { $match: { ...baseMatch, status: "delivered" } },
         {
           $group: {
             _id: "$shopName",
@@ -150,9 +204,95 @@ export const getSummary = async (req, res) => {
         { $limit: 10 },
       ]),
 
-      Order.find().sort({ orderDate: -1 }).limit(10).lean(),
+      Order.find(baseMatch).sort({ orderDate: -1 }).limit(10).lean(),
 
-      Customer.countDocuments(),
+      Customer.countDocuments(baseMatch),
+
+      // Product statistics
+      Product.countDocuments(baseMatch),
+      Product.countDocuments({ ...baseMatch, isActive: true }),
+      Product.countDocuments({
+        ...baseMatch,
+        "stock.trackStock": true,
+        $expr: {
+          $and: [
+            { $lte: ["$stock.quantity", "$stock.lowStockThreshold"] },
+            { $gte: ["$stock.quantity", 0] },
+          ],
+        },
+      }),
+      Product.distinct("category", baseMatch).then((cats) => cats.filter(Boolean).length),
+
+      // Top products by quantity sold (from order items)
+      Order.aggregate([
+        { $match: { ...baseMatch, status: "delivered" } },
+        // Only process orders that have items array with at least one item
+        { $match: { items: { $exists: true, $ne: [], $type: "array" } } },
+        { $unwind: "$items" },
+        // Filter out items without productId
+        { $match: { "items.productId": { $exists: true, $ne: null } } },
+        {
+          $group: {
+            _id: "$items.productId",
+            productName: { $first: "$items.productName" },
+            totalQuantity: { $sum: { $ifNull: ["$items.quantity", 0] } },
+            totalRevenue: { $sum: { $ifNull: ["$items.subtotal", 0] } },
+            orderCount: { $sum: 1 },
+          },
+        },
+        { $sort: { totalQuantity: -1 } },
+        { $limit: 5 },
+        {
+          $project: {
+            _id: 0,
+            productId: "$_id",
+            productName: 1,
+            totalQuantity: 1,
+            totalRevenue: 1,
+            orderCount: 1,
+          },
+        },
+      ]),
+
+      // Top categories by revenue
+      Order.aggregate([
+        { $match: { ...baseMatch, status: "delivered" } },
+        { $unwind: "$items" },
+        {
+          $lookup: {
+            from: "products",
+            localField: "items.productId",
+            foreignField: "_id",
+            as: "product",
+          },
+        },
+        { $unwind: { path: "$product", preserveNullAndEmptyArrays: true } },
+        {
+          $group: {
+            _id: "$product.category",
+            totalRevenue: { $sum: "$items.subtotal" },
+            orderCount: { $sum: 1 },
+          },
+        },
+        { $match: { _id: { $ne: null } } },
+        { $sort: { totalRevenue: -1 } },
+        { $limit: 5 },
+        {
+          $project: {
+            _id: 0,
+            category: "$_id",
+            totalRevenue: 1,
+            orderCount: 1,
+          },
+        },
+      ]),
+
+      // Recent products
+      Product.find(baseMatch)
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select("name imageUrl price category createdAt")
+        .lean(),
     ]);
 
     const deliveredTotals = deliveredTotalsAgg[0] || {
@@ -165,23 +305,66 @@ export const getSummary = async (req, res) => {
       deliveredOrders: 0,
     };
 
-    // ---- Weekly → son 7 günü 0'larla doldur (grafiğin boş kalmaması için)
+    // Debug: Product statistics
+    console.log("[Analytics] Period filter:", period, "Days:", days, "GroupBy:", groupBy);
+    console.log("[Analytics] OrganizationId:", req.organizationId);
+    console.log("[Analytics] BaseMatch for products:", JSON.stringify(baseMatch));
+    console.log("[Analytics] Product counts (raw):", {
+      totalProducts,
+      activeProducts,
+      lowStockProducts,
+      totalCategories,
+    });
+    console.log("[Analytics] Product counts (with defaults):", {
+      totalProducts: totalProducts || 0,
+      activeProducts: activeProducts || 0,
+      lowStockProducts: lowStockProducts || 0,
+      totalCategories: totalCategories || 0,
+    });
+
+    // ---- Weekly → son N günü/haftayı 0'larla doldur (grafiğin boş kalmaması için)
     const mapWeekly = new Map(
       (weeklyAggAll || []).map(r => [r._id, { r: Number(r.revenue || 0), o: Number(r.orders || 0) }])
     );
-    const last7 = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (6 - i));
-      return ymdOf(d, tz);
-    });
-    const weeklyFilled = last7.map(ds => {
-      const item = mapWeekly.get(ds);
-      return {
-        date: ds,
-        revenue: item ? item.r : 0,
-        orders: item ? item.o : 0,
-      };
-    });
+    
+    let weeklyFilled;
+    if (groupBy === "day") {
+      // Daily view
+      const lastNDays = Array.from({ length: days }, (_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - (days - 1 - i));
+        return ymdOf(d, tz);
+      });
+      weeklyFilled = lastNDays.map(ds => {
+        const item = mapWeekly.get(ds);
+        const [y, m, d] = ds.split("-");
+        return {
+          date: ds,
+          label: `${d}/${m}`,
+          revenue: item ? item.r : 0,
+          orders: item ? item.o : 0,
+        };
+      });
+    } else {
+      // Weekly view
+      const weeks = Math.ceil(days / 7);
+      const lastNWeeks = Array.from({ length: weeks }, (_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - ((weeks - 1 - i) * 7));
+        const year = d.getFullYear();
+        const week = getISOWeek(d);
+        return `${year}-W${String(week).padStart(2, "0")}`;
+      });
+      weeklyFilled = lastNWeeks.map(weekKey => {
+        const item = mapWeekly.get(weekKey);
+        return {
+          date: weekKey,
+          label: `W${weekKey.split("-W")[1]}`,
+          revenue: item ? item.r : 0,
+          orders: item ? item.o : 0,
+        };
+      });
+    }
 
     // Prediction confidence (çok basit sinyal)
     const statusMap = Object.fromEntries((statusAgg || []).map(s => [s.status, s.count]));
@@ -189,8 +372,8 @@ export const getSummary = async (req, res) => {
     const deliveryRate = totalOrdersCount ? deliveredCountAllTime / totalOrdersCount : 0;
     const predictionConfidence = Math.round((0.6 + 0.4 * deliveryRate) * 100);
 
-    res.json({
-      meta: { tz, todayStr },
+    const response = {
+      meta: { tz, todayStr, period, groupBy },
       totals: {
         orders: totalOrdersCount, // tüm sipariş sayısı
         deliveredOrders: deliveredTotals.deliveredOrders, // toplam delivered
@@ -199,22 +382,35 @@ export const getSummary = async (req, res) => {
           deliveredTotals.deliveredOrders > 0
             ? Number(deliveredTotals.revenue) / deliveredTotals.deliveredOrders
             : 0,
-        totalCustomers,
+        totalCustomers: totalCustomers || 0,
+        totalProducts: totalProducts || 0,
+        activeProducts: activeProducts || 0,
+        lowStockProducts: lowStockProducts || 0,
+        totalCategories: totalCategories || 0,
       },
       today: {
         orders: todayAll, // bugün (tüm statüler)
         revenue: Number(todayDelivered.revenue || 0), // bugün delivered geliri
         deliveredOrders: todayDelivered.deliveredOrders || 0,
       },
-      weekly: weeklyFilled,           // <- doldurulmuş 7 günlük dizi
+      weekly: weeklyFilled,           // <- doldurulmuş N günlük dizi
       payments: paymentAgg,           // delivered
       status: statusAgg,              // all statuses
       topShop: topShopAgg[0] || null, // delivered (revenue alanıyla)
       topCustomers: topCustomersAgg,  // aslında top SHOPS – customerName=shopName
       recentOrders,                   // mixed
+      topProducts: topProductsByQuantity || [],
+      topCategories: topCategoriesByRevenue || [],
+      recentProducts: recentProducts || [],
       predictionConfidence,
-    });
+    };
+
+    console.log("[Analytics] Response totals:", JSON.stringify(response.totals, null, 2));
+    console.log("[Analytics] Weekly array length:", response.weekly.length);
+
+    res.json(response);
   } catch (e) {
+    console.error("[Analytics] Error:", e);
     res.status(500).json({ message: e.message });
   }
 };

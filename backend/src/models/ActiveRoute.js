@@ -14,6 +14,13 @@ const StopSchema = new mongoose.Schema({
 }, { _id: false });
 
 const ActiveRouteSchema = new mongoose.Schema({
+  // Multi-tenant support (opsiyonel başlatıyoruz)
+  organizationId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: "Organization",
+    index: true 
+  },
+  
   driver: { type: String, default: "driver", index: true },
   start: { lat: Number, lng: Number },
   method: String,
@@ -22,5 +29,8 @@ const ActiveRouteSchema = new mongoose.Schema({
   totalServiceMinutes: Number,
   stops: [StopSchema],
 }, { timestamps: true });
+
+// Multi-tenant index
+ActiveRouteSchema.index({ organizationId: 1, driver: 1 });
 
 export const ActiveRoute = mongoose.model("ActiveRoute", ActiveRouteSchema);

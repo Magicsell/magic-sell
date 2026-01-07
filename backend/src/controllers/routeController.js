@@ -1,4 +1,5 @@
 // src/controllers/routeController.js
+import mongoose from "mongoose";
 import { Order } from "../models/Order.js";
 import { ActiveRoute } from "../models/ActiveRoute.js";
 
@@ -143,6 +144,7 @@ export async function planFromOrders(req, res) {
     const {
       start, end,
       statuses = ["pending"],
+      orderIds, // Array of order IDs to include (optional)
       roundTrip = true,
       serviceMin = 5,
       avgSpeedKmh = 30,
@@ -150,14 +152,52 @@ export async function planFromOrders(req, res) {
     } = req.body || {};
 
     const match = {
-      status: { $in: statuses },
       "geo.lat": { $type: "number" },
       "geo.lng": { $type: "number" }
     };
 
+    // Filter by specific order IDs if provided
+    if (orderIds && Array.isArray(orderIds) && orderIds.length > 0) {
+      console.log("[planFromOrders] Received orderIds:", orderIds);
+      const validIds = orderIds
+        .filter(id => id && typeof id === "string")
+        .map(id => {
+          try {
+            return mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : null;
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+      
+      console.log("[planFromOrders] Valid orderIds:", validIds.map(id => id.toString()));
+      
+      if (validIds.length > 0) {
+        // When specific order IDs are provided, only filter by IDs (ignore status)
+        match._id = { $in: validIds };
+        console.log("[planFromOrders] Filtering by orderIds only, match:", JSON.stringify(match));
+      } else {
+        // No valid IDs, return empty result
+        console.log("[planFromOrders] No valid order IDs, returning empty");
+        return res.json({ message: "No valid order IDs provided", totalDistanceKm: 0, stops: [] });
+      }
+    } else {
+      // No orderIds provided, use status filter for all pending orders
+      match.status = { $in: statuses };
+      console.log("[planFromOrders] No orderIds provided, using all pending orders");
+    }
+
+    // Tenant filter
+    if (req.organizationId) {
+      match.organizationId = req.organizationId;
+    }
+
     const orders = await Order.find(match)
-      .select("_id shopName customerName customerAddress customerPostcode totalAmount geo")
+      .select("_id shopName customerName customerAddress customerPostcode totalAmount paymentMethod paymentBreakdown geo")
       .lean();
+
+    console.log("[planFromOrders] Found orders:", orders.length);
+    console.log("[planFromOrders] Order IDs:", orders.map(o => o._id.toString()));
 
     if (!orders.length) {
       return res.json({ message: "No orders with geo for given filter", totalDistanceKm: 0, stops: [] });
@@ -171,6 +211,13 @@ export async function planFromOrders(req, res) {
       lng: o.geo.lng,
       orderId: String(o._id),
       amount: o.totalAmount ?? 0,
+      paymentMethod: o.paymentMethod || "Not Set",
+      paymentBreakdown: o.paymentBreakdown || {
+        balanceAmount: 0,
+        cashAmount: 0,
+        cardAmount: 0,
+        bankAmount: 0,
+      },
     }));
 
     const route = computeRoute({ start, end, stops, roundTrip, serviceMin, avgSpeedKmh, opt });
@@ -187,9 +234,16 @@ export async function setActiveRoute(req, res) {
     if (!b?.stops?.length) return res.status(400).json({ message: "stops required" });
     const driver = b.driver || "driver";
 
+    // Tenant filter
+    const query = { driver };
+    if (req.organizationId) {
+      query.organizationId = req.organizationId;
+    }
+
     const doc = await ActiveRoute.findOneAndUpdate(
-      { driver },
+      query,
       {
+        organizationId: req.organizationId || b.organizationId, // Tenant support
         driver,
         start: b.start || null,
         method: b.method || "2opt",
@@ -212,6 +266,12 @@ export async function getActiveRoute(req, res) {
   try {
     const { driver } = req.query || {};
     const q = driver ? { driver } : {};
+    
+    // Tenant filter
+    if (req.organizationId) {
+      q.organizationId = req.organizationId;
+    }
+    
     const doc = await ActiveRoute.findOne(q).sort({ updatedAt: -1 }).lean();
     if (!doc) return res.json({ stops: [] });
     res.json(doc);
