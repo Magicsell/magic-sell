@@ -3,6 +3,29 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { MAPBOX_TOKEN } from "../lib/config";
 
+// UK Postcode geocode utility
+async function geocodePostcode(postcode) {
+  if (!postcode || !postcode.trim()) return null;
+  try {
+    const cleanPostcode = postcode.trim().replace(/\s+/g, '').toUpperCase();
+    const response = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(cleanPostcode)}`);
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json();
+    if (data.status === 200 && data.result) {
+      const result = {
+        lat: data.result.latitude,
+        lng: data.result.longitude
+      };
+      return result;
+    }
+  } catch (error) {
+    // Silent fail
+  }
+  return null;
+}
+
 const ROUTE_COLOR = "#4f46e5"; // indigo-600 – istersen #ef4444, #2563eb, #14b8a6…
 const WIDTH = ["interpolate", ["linear"], ["zoom"], 9, 3, 14, 7];
 const CASING_WIDTH = ["interpolate", ["linear"], ["zoom"], 9, 6, 14, 12];
@@ -15,8 +38,15 @@ export default function RouteMap({ route }) {
   const [err, setErr] = useState("");
 
   // start + stops → çizim sırası
+  // Build points from route - use backend coordinates immediately
   const points = useMemo(() => {
+    if (!route) {
+      return [];
+    }
+    
     const arr = [];
+    
+    // Start point (depot)
     if (
       route?.start &&
       typeof route.start.lat === "number" &&
@@ -28,20 +58,38 @@ export default function RouteMap({ route }) {
         address: "Bournemouth",
         isStart: true,
       });
+      console.log("[RouteMap] START point:", { lat: route.start.lat, lng: route.start.lng });
     }
-    for (const x of route?.stops || []) {
-      if (typeof x?.lat === "number" && typeof x?.lng === "number") {
-        arr.push({
-          lat: x.lat,
-          lng: x.lng,
-          name: x.name,
-          address: x.address,
-          isStart: false,
-        });
+
+    // Process stops - use backend coordinates
+    if (route?.stops && Array.isArray(route.stops)) {
+      for (const x of route.stops) {
+        if (typeof x.lat === "number" && typeof x.lng === "number" && 
+            isFinite(x.lat) && isFinite(x.lng) &&
+            x.lat >= -90 && x.lat <= 90 &&
+            x.lng >= -180 && x.lng <= 180) {
+          arr.push({
+            lat: x.lat,
+            lng: x.lng,
+            name: x.name,
+            address: x.address || "",
+            postcode: x.postcode || "",
+            isStart: false,
+          });
+          console.log(`[RouteMap] STOP ${x.name}:`, { lat: x.lat, lng: x.lng, postcode: x.postcode });
+        } else {
+          console.warn(`[RouteMap] INVALID coordinates for ${x.name}:`, { lat: x.lat, lng: x.lng });
+        }
       }
     }
+
+    console.log(`[RouteMap] Total points: ${arr.length}`);
     return arr;
   }, [route]);
+
+  // Use backend coordinates directly - they are already correct
+  // Postcode geocoding disabled because backend coordinates are accurate
+  const finalPoints = points;
 
   // init
   useEffect(() => {
@@ -86,7 +134,7 @@ export default function RouteMap({ route }) {
         try {
           m.removeLayer(id);
         } catch (e) {
-          console.warn(`Failed to remove layer ${id}:`, e);
+          // Silent fail
         }
       }
     });
@@ -100,7 +148,7 @@ export default function RouteMap({ route }) {
         try {
           m.removeSource(src);
         } catch (e) {
-          console.warn(`Failed to remove source ${src}:`, e);
+          // Silent fail
         }
       }
     });
@@ -110,17 +158,34 @@ export default function RouteMap({ route }) {
       try {
         mrk.remove();
       } catch (e) {
-        console.warn("Failed to remove marker:", e);
+        // Silent fail
       }
     });
     markersRef.current = [];
   }
 
  function addMarker(p, idx) {
+  if (!mapRef.current) {
+    return;
+  }
+
+  // Validate coordinates - strict validation
+  if (
+    typeof p.lat !== "number" || 
+    typeof p.lng !== "number" || 
+    !isFinite(p.lat) || 
+    !isFinite(p.lng) ||
+    p.lat < -90 || p.lat > 90 ||
+    p.lng < -180 || p.lng > 180
+  ) {
+    return;
+  }
+
   const el = document.createElement("div");
   const isStart = p.isStart === true;
   
   // Start marker için daha büyük ve belirgin stil
+  // Don't use position:relative - Mapbox handles positioning
   if (isStart) {
     el.style.cssText = `
       width:36px;height:36px;border-radius:50%;
@@ -129,20 +194,18 @@ export default function RouteMap({ route }) {
       color:#ffffff;display:flex;align-items:center;justify-content:center;
       font-size:14px;font-weight:900;
       box-shadow:0 0 0 3px rgba(96,165,250,.4), 0 2px 8px rgba(0,0,0,.3);
-      z-index:1000;
-      position:relative;
+      cursor:pointer;
     `;
     el.innerText = "S";
   } else {
     el.style.cssText = `
-      width:28px;height:28px;border-radius:50%;
+      width:32px;height:32px;border-radius:50%;
       background:#0a0f1a;
-      border:2px solid #22c55e;
-      color:#e5fff1;display:flex;align-items:center;justify-content:center;
-      font-size:12px;font-weight:700;
-      box-shadow:0 0 0 2px rgba(34,197,94,.25);
-      z-index:999;
-      position:relative;
+      border:3px solid #22c55e;
+      color:#ffffff;display:flex;align-items:center;justify-content:center;
+      font-size:13px;font-weight:900;
+      box-shadow:0 0 0 3px rgba(34,197,94,.4), 0 2px 8px rgba(0,0,0,.4);
+      cursor:pointer;
     `;
     el.innerText = String(idx);
   }
@@ -152,11 +215,17 @@ export default function RouteMap({ route }) {
   const postc   = escapeHtml((p.postcode || "").toUpperCase());
   const line2   = [addr, postc].filter(Boolean).join(", ");
 
+  // Create marker with explicit coordinates - Mapbox uses [lng, lat] format
+  const coordinates = [Number(p.lng), Number(p.lat)];
+  console.log(`[RouteMap] Creating marker ${isStart ? "START" : `#${idx}`} at [${p.lng}, ${p.lat}] for ${p.name}`);
+  
+  // Create marker - Mapbox will handle positioning
   const m = new mapboxgl.Marker({ 
     element: el,
-    anchor: 'center'
+    anchor: 'center',
+    draggable: false
   })
-    .setLngLat([p.lng, p.lat])
+    .setLngLat(coordinates)
     .setPopup(
       new mapboxgl.Popup({ offset: 12 }).setHTML(`
         <div style="font-weight:600;margin-bottom:4px; color:#111827;">
@@ -168,13 +237,16 @@ export default function RouteMap({ route }) {
       `)
     )
     .addTo(mapRef.current);
+  
+  // Force marker to update position after being added
+  // This ensures marker is positioned correctly even after map transforms
+  setTimeout(() => {
+    if (m && mapRef.current) {
+      m.setLngLat(coordinates);
+    }
+  }, 100);
 
   markersRef.current.push(m);
-  
-  // Debug log
-  if (isStart) {
-    console.log("[RouteMap] Added START marker at:", p.lat, p.lng);
-  }
 }
 
 
@@ -183,29 +255,12 @@ export default function RouteMap({ route }) {
     const map = mapRef.current;
     setErr("");
     clearAll();
-    if (points.length < 1) return;
+    if (finalPoints.length < 1) {
+      return;
+    }
 
-    console.log("[RouteMap] Rendering markers, points count:", points.length);
-    console.log("[RouteMap] Points:", points.map(p => ({ name: p.name, isStart: p.isStart, lat: p.lat, lng: p.lng })));
-    console.log("[RouteMap] Route start:", route?.start);
-
-    // markers: ilk nokta start (S), kalanlar 1..n numaralı
-    points.forEach((p, i) => {
-      if (p.isStart) {
-        console.log("[RouteMap] Adding START marker at index", i, "lat:", p.lat, "lng:", p.lng);
-        addMarker(p, "S");
-      } else {
-        // Skip start point when numbering stops (stops start from 1)
-        const stopNumber = points[0]?.isStart ? i : i + 1;
-        console.log("[RouteMap] Adding stop marker", stopNumber, "at index", i);
-        addMarker(p, stopNumber);
-      }
-    });
-
-    // bounds
-    const bounds = new mapboxgl.LngLatBounds();
-    points.forEach((p) => bounds.extend([p.lng, p.lat]));
-    map.fitBounds(bounds, { padding: 40, duration: 600 });
+    // Markers will be created after route is drawn to ensure correct positioning
+    // Don't create markers here - they'll be created after route line is drawn
 
     // helpers
     const featureFor = (coords) => ({
@@ -219,7 +274,7 @@ export default function RouteMap({ route }) {
     if (!MAPBOX_TOKEN) {
       map.addSource("route-fallback", {
         type: "geojson",
-        data: lineCoordsFor(points),
+        data: lineCoordsFor(finalPoints),
       });
 
       map.addLayer({
@@ -247,6 +302,25 @@ export default function RouteMap({ route }) {
         },
       });
 
+      // Fit bounds first
+      const rb = new mapboxgl.LngLatBounds();
+      finalPoints.forEach((p) => rb.extend([p.lng, p.lat]));
+      map.fitBounds(rb, { padding: 60, duration: 600 });
+      
+      // Create markers AFTER fitBounds animation completes
+      setTimeout(() => {
+        if (!mapRef.current) return;
+        let stopCounter = 1;
+        finalPoints.forEach((p) => {
+          if (p.isStart) {
+            addMarker(p, "S");
+          } else {
+            addMarker(p, stopCounter);
+            stopCounter++;
+          }
+        });
+      }, 650);
+
       setErr("Mapbox token missing — drawing straight lines as fallback.");
       return;
     }
@@ -255,11 +329,12 @@ export default function RouteMap({ route }) {
     (async () => {
       try {
         // coords: start + duraklar (+ roundTrip ise tekrar start)
-        const tripPts = [...points];
+        // Use finalPoints for route line
+        const tripPts = [...finalPoints];
         const roundTrip = !!(
-          route?.params?.roundTrip && points[0]?.isStart
+          route?.params?.roundTrip && finalPoints[0]?.isStart
         );
-        if (roundTrip) tripPts.push(points[0]); // depoya dönüş
+        if (roundTrip && finalPoints[0]) tripPts.push(finalPoints[0]); // depoya dönüş
 
         const coordsParam = tripPts
           .map((p) => `${p.lng},${p.lat}`)
@@ -268,10 +343,14 @@ export default function RouteMap({ route }) {
           `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coordsParam}` +
           `?geometries=geojson&overview=full&steps=false&access_token=${MAPBOX_TOKEN}`;
         const r = await fetch(url);
-        if (!r.ok) throw new Error(`Directions failed ${r.status}`);
+        if (!r.ok) {
+          throw new Error(`Directions failed ${r.status}`);
+        }
         const j = await r.json();
         const line = j?.routes?.[0]?.geometry?.coordinates;
-        if (!Array.isArray(line)) throw new Error("No route geometry");
+        if (!Array.isArray(line)) {
+          throw new Error("No route geometry");
+        }
         if (aborted || !mapRef.current) return;
 
         // tek source, iki layer (casing + line)
@@ -310,16 +389,37 @@ export default function RouteMap({ route }) {
           src.setData(featureFor(line));
         }
 
+        // Fit bounds first, then create markers after animation completes
         const rb = new mapboxgl.LngLatBounds();
         line.forEach((c) => rb.extend(c));
-        map.fitBounds(rb, { padding: 40, duration: 600 });
+        // Also include all marker points to ensure they're visible
+        finalPoints.forEach((p) => rb.extend([p.lng, p.lat]));
+        
+        // Fit bounds and create markers after animation completes
+        map.fitBounds(rb, { padding: 60, duration: 600 });
+        
+        // Wait for fitBounds animation to complete, then create markers
+        setTimeout(() => {
+          if (aborted || !mapRef.current) return;
+          
+          // Create markers AFTER fitBounds animation completes
+          let stopCounter = 1;
+          finalPoints.forEach((p) => {
+            if (p.isStart) {
+              addMarker(p, "S");
+            } else {
+              addMarker(p, stopCounter);
+              stopCounter++;
+            }
+          });
+        }, 650); // Slightly longer than fitBounds duration
       } catch (e) {
         if (aborted) return;
 
         // fallback: straight line with casing
         map.addSource("route-fallback", {
           type: "geojson",
-          data: lineCoordsFor(points),
+          data: lineCoordsFor(finalPoints),
         });
         map.addLayer({
           id: "route-fallback-casing",
@@ -345,6 +445,25 @@ export default function RouteMap({ route }) {
           },
         });
 
+        // Fit bounds first
+        const rb = new mapboxgl.LngLatBounds();
+        finalPoints.forEach((p) => rb.extend([p.lng, p.lat]));
+        map.fitBounds(rb, { padding: 60, duration: 600 });
+        
+        // Create markers AFTER fitBounds animation completes
+        setTimeout(() => {
+          if (!mapRef.current) return;
+          let stopCounter = 1;
+          finalPoints.forEach((p) => {
+            if (p.isStart) {
+              addMarker(p, "S");
+            } else {
+              addMarker(p, stopCounter);
+              stopCounter++;
+            }
+          });
+        }, 650);
+
         setErr(e.message || "Directions error");
       }
     })();
@@ -353,12 +472,12 @@ export default function RouteMap({ route }) {
       clearAll();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapLoaded, points, route?.params?.roundTrip]);
+  }, [mapLoaded, finalPoints, route?.params?.roundTrip]);
 
-  if (!route || points.length === 0) {
+  if (!route || finalPoints.length === 0) {
     return (
       <div className="h-80 rounded-xl border border-slate-800 flex items-center justify-center text-slate-400">
-        No route to display
+        {route ? "No valid stops found" : "No route to display"}
       </div>
     );
   }

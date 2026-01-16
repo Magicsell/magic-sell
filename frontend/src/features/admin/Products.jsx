@@ -4,6 +4,7 @@ import { apiGet, apiDelete } from "../../lib/api";
 import { API_URL } from "../../lib/config";
 import { Pencil, Trash2, Plus, Search, Image as ImageIcon, Package, Tag, Package2, ShoppingCart, ChevronDown } from "lucide-react";
 import Breadcrumb from "../../components/Breadcrumb";
+import Pagination from "../../components/Pagination";
 
 // Tab component for status filters (same style as Orders page)
 function Tab({ active, children, ...p }) {
@@ -32,7 +33,7 @@ function ProductImage({ imageUrl, alt, category }) {
   }
   
   const imageSrc = imageUrl && !imgError
-    ? (normalizedUrl.startsWith("http") 
+    ? (normalizedUrl.startsWith("http") || normalizedUrl.startsWith("data:")
         ? normalizedUrl 
         : normalizedUrl.startsWith("/") 
           ? `${API_URL}${normalizedUrl}`
@@ -74,7 +75,8 @@ export default function Products() {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
-  const pageSize = 20;
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
 
   // Admin → Delete
   async function handleDelete(productId, productName) {
@@ -99,11 +101,11 @@ export default function Products() {
   }, []);
 
   // server'dan çek
-  async function fetchProducts(nextPage = page, nextCategory = categoryFilter, nextIsActive = isActiveFilter, nextQ = q) {
+  async function fetchProducts(nextPage = page, nextCategory = categoryFilter, nextIsActive = isActiveFilter, nextQ = q, nextPageSize = pageSize) {
     setLoading(true);
     const params = new URLSearchParams();
     params.set("page", String(nextPage));
-    params.set("pageSize", String(pageSize));
+    params.set("pageSize", String(nextPageSize));
     if (nextCategory && nextCategory !== "all") {
       params.set("category", nextCategory);
     }
@@ -114,21 +116,12 @@ export default function Products() {
 
     try {
       const url = `/api/products?${params.toString()}`;
-      console.log("Fetching products:", url, "isActiveFilter:", nextIsActive);
       const data = await apiGet(url);
-      console.log("Raw response from API:", JSON.stringify({ 
-        isArray: Array.isArray(data),
-        hasItems: !!data.items,
-        itemsLength: data.items?.length,
-        total: data.total,
-        items: data.items?.map(p => ({ name: p.name, isActive: p.isActive }))
-      }));
       const list = Array.isArray(data) ? data : data.items ?? [];
-      console.log("Products received:", list.length, "items, total:", data.total);
-      console.log("Products isActive values:", list.map(p => ({ name: p.name, isActive: p.isActive })));
       setRows(list);
       setPage(Number(data.page || nextPage));
-      setPages(Number(data.totalPages || 1));
+      setPages(Number(data.pages || data.totalPages || 1));
+      setTotal(Number(data.total || list.length));
     } catch (e) {
       console.error("Failed to fetch products:", e);
     } finally {
@@ -144,21 +137,35 @@ export default function Products() {
   // UI eventleri
   function onChangeCategory(v) {
     setCategoryFilter(v);
+    setPage(1);
     fetchProducts(1, v, isActiveFilter, q);
   }
   function onChangeIsActive(v) {
     setIsActiveFilter(v);
+    setPage(1);
     fetchProducts(1, categoryFilter, v, q);
   }
   function onSearchSubmit(e) {
     e.preventDefault();
+    setPage(1);
     fetchProducts(1, categoryFilter, isActiveFilter, q);
   }
-  function prev() {
-    if (page > 1) fetchProducts(page - 1, categoryFilter, isActiveFilter, q);
-  }
-  function next() {
-    if (page < pages) fetchProducts(page + 1, categoryFilter, isActiveFilter, q);
+  
+  // Auto-refresh when search is cleared
+  useEffect(() => {
+    if (!q.trim()) {
+      // Search is empty, refresh to show all
+      setPage(1);
+      fetchProducts(1, categoryFilter, isActiveFilter, "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+  
+  function onChangePageSize(newSize) {
+    const newPageSize = Number(newSize);
+    setPageSize(newPageSize);
+    setPage(1);
+    fetchProducts(1, categoryFilter, isActiveFilter, q, newPageSize);
   }
 
 
@@ -332,27 +339,21 @@ export default function Products() {
             </div>
 
             {/* Pagination */}
-            {pages > 1 && (
-              <div className="mt-8 flex items-center justify-between">
-                <button
-                  onClick={prev}
-                  disabled={page === 1}
-                  className="px-4 py-2 rounded-lg border border-slate-700 bg-slate-800/50 text-slate-200 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-800 hover:border-slate-600 transition-colors"
-                >
-                  Previous
-                </button>
-                <span className="text-sm text-slate-400">
-                  Page {page} of {pages}
-                </span>
-                <button
-                  onClick={next}
-                  disabled={page >= pages}
-                  className="px-4 py-2 rounded-lg border border-slate-700 bg-slate-800/50 text-slate-200 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-800 hover:border-slate-600 transition-colors"
-                >
-                  Next
-                </button>
-              </div>
-            )}
+            <Pagination
+              page={page}
+              pages={pages}
+              pageSize={pageSize}
+              total={total}
+              itemsCount={rows.length}
+              itemLabel="products"
+              onPageChange={(newPage) => {
+                if (newPage >= 1 && newPage <= pages) {
+                  fetchProducts(newPage, categoryFilter, isActiveFilter, q);
+                }
+              }}
+              onPageSizeChange={onChangePageSize}
+              className="mt-8 rounded-b-xl"
+            />
           </>
         )}
     </div>

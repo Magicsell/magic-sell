@@ -5,6 +5,9 @@ import { API_URL } from "../../lib/config";
 import { getToken } from "../../features/auth/auth";
 import { Upload, X, Image as ImageIcon, FileText, Tag, Grid, Camera, ToggleLeft } from "lucide-react";
 import Breadcrumb from "../../components/Breadcrumb";
+import { useToast } from "../../components/Toast";
+import { useApiError } from "../../hooks/useApiError";
+import { ToastContainer } from "../../components/Toast";
 
 const INPUT_CLS = `
   w-full rounded-lg border px-3 py-2
@@ -88,6 +91,9 @@ export default function ProductForm() {
   const [loading, setLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
 
+  const { showToast, removeToast, toasts } = useToast();
+  const handleApiError = useApiError();
+
   // Categories list
   const [categories, setCategories] = useState([]);
   useEffect(() => {
@@ -163,26 +169,20 @@ export default function ProductForm() {
     
     setUploadingImage(true);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      
-      const token = getToken();
-      const response = await fetch(`${API_URL}/api/files/product-image`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
+      // Convert file to base64 data URI
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64String = reader.result; // This is already a data URI
+          resolve(base64String);
+        };
+        reader.onerror = () => {
+          reject(new Error("Failed to read image file"));
+        };
+        reader.readAsDataURL(file);
       });
-
-      if (!response.ok) {
-        throw new Error("Image upload failed");
-      }
-
-      const data = await response.json();
-      return data.url;
     } catch (error) {
-      throw new Error("Failed to upload image. Please try again.");
+      throw new Error("Failed to process image. Please try again.");
     } finally {
       setUploadingImage(false);
     }
@@ -190,10 +190,20 @@ export default function ProductForm() {
 
   function handleImageChange(e) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file) {
+      // Reset input value if no file selected
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      return;
+    }
 
     if (file.size > 5 * 1024 * 1024) {
       setFieldErrors((prev) => ({ ...prev, image: "Image must be less than 5MB" }));
+      // Reset input value on error
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
       return;
     }
 
@@ -202,6 +212,12 @@ export default function ProductForm() {
     reader.onloadend = () => {
       setImagePreview(reader.result);
     };
+    reader.onerror = () => {
+      setFieldErrors((prev) => ({ ...prev, image: "Failed to read image file" }));
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    };
     reader.readAsDataURL(file);
     setFieldErrors((prev) => ({ ...prev, image: "" }));
   }
@@ -209,6 +225,7 @@ export default function ProductForm() {
   function removeImage() {
     setImageFile(null);
     setImagePreview(null);
+    setForm((prev) => ({ ...prev, imageUrl: null }));
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -234,16 +251,22 @@ export default function ProductForm() {
     setErr("");
     if (!v.ok) return;
 
-    let imageUrl = form.imageUrl || null;
+    let imageUrl = null;
     
-    // Upload new image if selected
-    if (imageFile) {
+    // If image was removed (no preview), imageUrl stays null
+    if (!imagePreview) {
+      imageUrl = null;
+    } else if (imageFile) {
+      // Upload new image if selected
       try {
         imageUrl = await handleImageUpload(imageFile);
       } catch (error) {
         setErr(error.message);
         return;
       }
+    } else {
+      // If there's a preview but no new file, use existing imageUrl (for edit mode)
+      imageUrl = form.imageUrl || null;
     }
 
     const payload = {
@@ -270,11 +293,15 @@ export default function ProductForm() {
       setBusy(true);
       if (isEdit) {
         await apiPatch(`/api/products/${productId}`, payload);
+        showToast("Product updated successfully", "success");
       } else {
         await apiPost("/api/products", payload);
+        showToast("Product created successfully", "success");
       }
       navigate("/admin/products");
     } catch (e) {
+      handleApiError(e);
+      // Also set error for inline display (optional, can remove if only toast is desired)
       setErr(e.message || (isEdit ? "Failed to save product." : "Failed to create product."));
     } finally {
       setBusy(false);
@@ -566,7 +593,11 @@ export default function ProductForm() {
                         />
                         <button
                           type="button"
-                          onClick={removeImage}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            removeImage();
+                          }}
                           className="absolute top-2 right-2 p-1.5 bg-slate-900/90 backdrop-blur-sm text-slate-300 rounded-md hover:bg-red-600 hover:text-white shadow-lg transition-all opacity-0 group-hover:opacity-100 z-10"
                           title="Remove image"
                         >
@@ -575,7 +606,10 @@ export default function ProductForm() {
                       </div>
                     </div>
                   ) : (
-                    <div className="w-full aspect-square rounded-lg border-2 border-dashed border-slate-700 flex flex-col items-center justify-center bg-slate-800/30 gap-3 p-6 cursor-pointer hover:border-slate-600 transition-colors" onClick={() => fileInputRef.current?.click()}>
+                    <label
+                      htmlFor="image-upload"
+                      className="w-full aspect-square rounded-lg border-2 border-dashed border-slate-700 flex flex-col items-center justify-center bg-slate-800/30 gap-3 p-6 cursor-pointer hover:border-slate-600 transition-colors"
+                    >
                       <div className="w-12 h-12 rounded-full bg-slate-700/50 flex items-center justify-center">
                         <ImageIcon className="w-6 h-6 text-slate-400" />
                       </div>
@@ -583,7 +617,7 @@ export default function ProductForm() {
                         <p className="text-sm font-medium text-slate-300">Click to upload</p>
                         <p className="text-xs text-slate-500 mt-1">PNG, JPG up to 5MB</p>
                       </div>
-                    </div>
+                    </label>
                   )}
                   <input
                     ref={fileInputRef}
@@ -593,15 +627,6 @@ export default function ProductForm() {
                     className="hidden"
                     id="image-upload"
                   />
-                  {!imagePreview && (
-                    <label
-                      htmlFor="image-upload"
-                      className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-slate-700 bg-slate-800/50 text-slate-200 text-sm font-medium cursor-pointer hover:bg-slate-800 hover:border-slate-600 transition-colors"
-                    >
-                      <Upload className="w-4 h-4" />
-                      Upload Image
-                    </label>
-                  )}
                   {imagePreview && (
                     <label
                       htmlFor="image-upload"
@@ -633,6 +658,7 @@ export default function ProductForm() {
             </button>
           </div>
         </form>
+        <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );
 }

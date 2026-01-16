@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   useReactTable,
   getCoreRowModel,
-  getSortedRowModel,
   flexRender,
   createColumnHelper,
 } from "@tanstack/react-table";
@@ -12,6 +11,8 @@ const columnHelper = createColumnHelper();
 import { apiGet, apiPatch, apiDelete } from "../../lib/api";
 import { Edit, Trash2, Plus, Search, CheckCircle, XCircle, User as UserIcon, Mail, Phone, MapPin, Clock } from "lucide-react";
 import Breadcrumb from "../../components/Breadcrumb";
+import Pagination from "../../components/Pagination";
+import { useTableSorting } from "../../hooks/useTableSorting";
 
 function Tab({ active, onClick, children }) {
   return (
@@ -36,19 +37,27 @@ export default function Drivers() {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
-  const [sorting, setSorting] = useState([{ id: "createdAt", desc: true }]);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
   const [pendingCount, setPendingCount] = useState(0);
-  const pageSize = 20;
+  
+  // Use sorting hook
+  const { sorting, setSorting, getSortParam } = useTableSorting({
+    defaultSort: [{ id: "createdAt", desc: true }],
+    onSortChange: (newSorting) => {
+      fetchDrivers(page, statusFilter, q, pageSize, newSorting);
+    },
+  });
 
   // Fetch drivers
-  async function fetchDrivers(nextPage = page, nextStatus = statusFilter, nextQ = q) {
+  async function fetchDrivers(nextPage = page, nextStatus = statusFilter, nextQ = q, nextPageSize = pageSize, nextSorting = sorting) {
     setLoading(true);
     
     try {
       // Fetch new User model (role: driver only)
       const userParams = new URLSearchParams();
       userParams.set("page", String(nextPage));
-      userParams.set("pageSize", String(pageSize));
+      userParams.set("pageSize", String(nextPageSize));
       userParams.set("role", "driver"); // Only drivers
       
       if (nextStatus === "approved") {
@@ -56,40 +65,36 @@ export default function Drivers() {
       } else if (nextStatus === "pending") {
         userParams.set("isApproved", "false");
       }
-
-      const userData = await apiGet(`/api/users?${userParams.toString()}`);
-      let drivers = userData.users || [];
       
-      // Client-side search
       if (nextQ.trim()) {
-        const searchLower = nextQ.toLowerCase();
-        drivers = drivers.filter((d) => {
-          const email = (d.email || "").toLowerCase();
-          const name = (d.driverProfile?.name || "").toLowerCase();
-          const phone = (d.driverProfile?.phone || "").toLowerCase();
-          return email.includes(searchLower) || name.includes(searchLower) || phone.includes(searchLower);
-        });
+        userParams.set("q", nextQ.trim());
+      }
+      
+      // Add sorting parameter
+      const sortParam = getSortParam(nextSorting);
+      if (sortParam) {
+        userParams.set("sort", sortParam);
       }
 
-      // Sort by createdAt (newest first)
-      drivers.sort((a, b) => {
-        const dateA = new Date(a.createdAt || 0);
-        const dateB = new Date(b.createdAt || 0);
-        return dateB - dateA;
-      });
-
-      // Pagination (client-side for combined results)
-      const startIndex = (nextPage - 1) * pageSize;
-      const endIndex = startIndex + pageSize;
-      const paginatedDrivers = drivers.slice(startIndex, endIndex);
+      const userData = await apiGet(`/api/users?${userParams.toString()}`);
+      const drivers = userData.users || [];
       
-      setRows(paginatedDrivers);
-      setPage(nextPage);
-      setPages(Math.ceil(drivers.length / pageSize));
+      setRows(drivers);
+      setPage(Number(userData.page || nextPage));
+      setPages(Number(userData.pages || userData.totalPages || 1));
+      setTotal(Number(userData.total || drivers.length));
       
-      // Count pending approvals
-      const pending = drivers.filter((d) => !d.isApproved).length;
-      setPendingCount(pending);
+      // Count pending approvals (fetch all pending for count)
+      try {
+        const pendingParams = new URLSearchParams();
+        pendingParams.set("role", "driver");
+        pendingParams.set("isApproved", "false");
+        const pendingData = await apiGet(`/api/users?${pendingParams.toString()}`);
+        const pending = Array.isArray(pendingData.users) ? pendingData.users.length : 0;
+        setPendingCount(pending);
+      } catch (e) {
+        console.error("Failed to fetch pending count:", e);
+      }
     } catch (e) {
       console.error("Failed to fetch drivers:", e);
     } finally {
@@ -98,34 +103,45 @@ export default function Drivers() {
   }
 
   useEffect(() => {
-    fetchDrivers(1, statusFilter, q);
+    fetchDrivers(1, statusFilter, q, pageSize, sorting);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // UI events
   function onChangeStatus(v) {
     setStatusFilter(v);
-    fetchDrivers(1, v, q);
+    setPage(1);
+    fetchDrivers(1, v, q, pageSize, sorting);
   }
 
   function onSearchSubmit(e) {
     e.preventDefault();
-    fetchDrivers(1, statusFilter, q);
+    setPage(1);
+    fetchDrivers(1, statusFilter, q, pageSize, sorting);
   }
-
-  function prev() {
-    if (page > 1) fetchDrivers(page - 1, statusFilter, q);
-  }
-
-  function next() {
-    if (page < pages) fetchDrivers(page + 1, statusFilter, q);
+  
+  // Auto-refresh when search is cleared
+  useEffect(() => {
+    if (!q.trim()) {
+      // Search is empty, refresh to show all
+      setPage(1);
+      fetchDrivers(1, statusFilter, "", pageSize, sorting);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+  
+  function onChangePageSize(newSize) {
+    const newPageSize = Number(newSize);
+    setPageSize(newPageSize);
+    setPage(1);
+    fetchDrivers(1, statusFilter, q, newPageSize, sorting);
   }
 
   // Approve driver
   async function handleApprove(driverId) {
     try {
       await apiPatch(`/api/users/${driverId}/approve`);
-      await fetchDrivers(page, statusFilter, q);
+      await fetchDrivers(page, statusFilter, q, pageSize, sorting);
     } catch (e) {
       alert(e.message || "Failed to approve driver");
     }
@@ -135,7 +151,7 @@ export default function Drivers() {
   async function handleReject(driverId) {
     try {
       await apiPatch(`/api/users/${driverId}/reject`);
-      await fetchDrivers(page, statusFilter, q);
+      await fetchDrivers(page, statusFilter, q, pageSize, sorting);
     } catch (e) {
       alert(e.message || "Failed to reject driver");
     }
@@ -146,7 +162,7 @@ export default function Drivers() {
     if (!window.confirm(`Delete driver "${email}"? This action cannot be undone.`)) return;
     try {
       await apiDelete(`/api/users/${driverId}`);
-      await fetchDrivers(page, statusFilter, q);
+      await fetchDrivers(page, statusFilter, q, pageSize, sorting);
     } catch (e) {
       alert(e.message || "Failed to delete driver");
     }
@@ -274,7 +290,7 @@ export default function Drivers() {
     data: rows,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
+    manualSorting: true, // Server-side sorting
     state: { sorting },
     onSortingChange: setSorting,
   });
@@ -400,29 +416,21 @@ export default function Drivers() {
           </div>
 
           {/* Pagination */}
-          {pages > 1 && (
-            <div className="mt-4 flex items-center justify-between">
-              <div className="text-sm text-slate-400">
-                Page {page} of {pages}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={prev}
-                  disabled={page === 1}
-                  className="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/50 text-slate-300 text-sm hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Previous
-                </button>
-                <button
-                  onClick={next}
-                  disabled={page === pages}
-                  className="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/50 text-slate-300 text-sm hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          )}
+          <Pagination
+            page={page}
+            pages={pages}
+            pageSize={pageSize}
+            total={total}
+            itemsCount={rows.length}
+            itemLabel="drivers"
+            onPageChange={(newPage) => {
+              if (newPage >= 1 && newPage <= pages) {
+                fetchDrivers(newPage, statusFilter, q, pageSize, sorting);
+              }
+            }}
+            onPageSizeChange={onChangePageSize}
+            className="mt-4"
+          />
         </>
       )}
     </div>

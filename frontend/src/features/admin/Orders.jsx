@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   useReactTable,
   getCoreRowModel,
-  getSortedRowModel,
   flexRender,
   createColumnHelper,
 } from "@tanstack/react-table";
@@ -13,6 +12,8 @@ import OrderProofModal from "../../components/OrderProofModal";
 import DeliveryModal from "../../components/DeliverModal";
 import { Edit, Eye, Truck, Trash2, Plus, ChevronUp, ChevronDown, Search } from "lucide-react";
 import Breadcrumb from "../../components/Breadcrumb";
+import Pagination from "../../components/Pagination";
+import { useTableSorting } from "../../hooks/useTableSorting";
 
 const columnHelper = createColumnHelper();
 
@@ -42,8 +43,16 @@ export default function Orders() {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
-  const [sorting, setSorting] = useState([{ id: "orderDate", desc: true }]);
-  const pageSize = 20;
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  
+  // Use sorting hook
+  const { sorting, setSorting, getSortParam } = useTableSorting({
+    defaultSort: [{ id: "orderDate", desc: true }],
+    onSortChange: (newSorting) => {
+      fetchOrders(page, status, q, pageSize, newSorting);
+    },
+  });
 
   // proof modal
   const [proofOpen, setProofOpen] = useState(false);
@@ -54,20 +63,40 @@ export default function Orders() {
   const [deliverOrder, setDeliverOrder] = useState(null);
 
   // Fetch orders
-  async function fetchOrders(nextPage = page, nextStatus = status, nextQ = q) {
+  async function fetchOrders(nextPage = page, nextStatus = status, nextQ = q, nextPageSize = pageSize, nextSorting = sorting) {
     setLoading(true);
     const params = new URLSearchParams();
     params.set("page", String(nextPage));
-    params.set("pageSize", String(pageSize));
+    params.set("pageSize", String(nextPageSize));
     if (nextStatus !== "all") params.set("status", nextStatus);
     if (nextQ.trim()) params.set("q", nextQ.trim());
+    
+    // Add sorting parameter
+    const sortParam = getSortParam(nextSorting);
+    if (sortParam) {
+      params.set("sort", sortParam);
+    }
 
     try {
       const data = await apiGet(`/api/orders?${params.toString()}`);
       const list = Array.isArray(data) ? data : data.items ?? [];
+      const currentPage = Number(data.page || nextPage);
+      // Backend returns 'pages', not 'totalPages'
+      const totalPages = Number(data.pages || data.totalPages || 1);
+      const totalCount = Number(data.total || list.length);
+      
+      console.log("[Orders] Pagination data:", {
+        page: currentPage,
+        pages: totalPages,
+        total: totalCount,
+        items: list.length,
+        backendData: { page: data.page, pages: data.pages, totalPages: data.totalPages, total: data.total }
+      });
+      
       setRows(list);
-      setPage(Number(data.page || nextPage));
-      setPages(Number(data.totalPages || 1));
+      setPage(currentPage);
+      setPages(totalPages);
+      setTotal(totalCount);
     } catch (e) {
       console.error("Failed to fetch orders:", e);
     } finally {
@@ -76,24 +105,37 @@ export default function Orders() {
   }
 
   useEffect(() => {
-    fetchOrders(1, status, q);
+    fetchOrders(1, status, q, pageSize, sorting);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // UI events
   function onChangeStatus(v) {
     setStatus(v);
-    fetchOrders(1, v, q);
+    setPage(1);
+    fetchOrders(1, v, q, pageSize, sorting);
   }
   function onSearchSubmit(e) {
     e.preventDefault();
-    fetchOrders(1, status, q);
+    setPage(1);
+    fetchOrders(1, status, q, pageSize, sorting);
   }
-  function prev() {
-    if (page > 1) fetchOrders(page - 1, status, q);
-  }
-  function next() {
-    if (page < pages) fetchOrders(page + 1, status, q);
+  
+  // Auto-refresh when search is cleared
+  useEffect(() => {
+    if (!q.trim()) {
+      // Search is empty, refresh to show all
+      setPage(1);
+      fetchOrders(1, status, "", pageSize, sorting);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+  
+  function onChangePageSize(newSize) {
+    const newPageSize = Number(newSize);
+    setPageSize(newPageSize);
+    setPage(1);
+    fetchOrders(1, status, q, newPageSize, sorting);
   }
 
   // View (sadece delivered)
@@ -119,7 +161,7 @@ export default function Orders() {
   async function afterDelivered() {
     setDeliverOpen(false);
     setDeliverOrder(null);
-    await fetchOrders(page, status, q);
+    await fetchOrders(page, status, q, pageSize, sorting);
   }
 
   // Admin → Delete
@@ -131,7 +173,7 @@ export default function Orders() {
 
     try {
       await apiDelete(`/api/orders/${orderId}`);
-      await fetchOrders(page, status, q);
+      await fetchOrders(page, status, q, pageSize, sorting);
     } catch (e) {
       alert(e.message || "Delete failed");
     }
@@ -241,10 +283,9 @@ export default function Orders() {
     data: rows,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
+    manualSorting: true, // Server-side sorting
     onSortingChange: setSorting,
     state: { sorting },
-    manualSorting: false,
   });
 
   return (
@@ -289,6 +330,7 @@ export default function Orders() {
             </Tab>
           </div>
 
+          {/* Search */}
           <form onSubmit={onSearchSubmit} className="flex gap-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
@@ -388,27 +430,20 @@ export default function Orders() {
           </div>
 
           {/* Pagination */}
-          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-800 bg-slate-800/40">
-            <div className="text-xs text-slate-400">
-              Page {page} / {pages} • {rows.length} orders
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={prev}
-                disabled={page <= 1}
-                className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800 transition-colors"
-              >
-                Previous
-              </button>
-              <button
-                onClick={next}
-                disabled={page >= pages}
-                className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800 transition-colors"
-              >
-                Next
-              </button>
-            </div>
-          </div>
+          <Pagination
+            page={page}
+            pages={pages}
+            pageSize={pageSize}
+            total={total}
+            itemsCount={rows.length}
+            itemLabel="orders"
+            onPageChange={(newPage) => {
+              if (newPage >= 1 && newPage <= pages) {
+                fetchOrders(newPage, status, q);
+              }
+            }}
+            onPageSizeChange={onChangePageSize}
+          />
         </div>
 
         {/* Modals */}

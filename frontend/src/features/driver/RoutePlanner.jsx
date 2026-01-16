@@ -134,9 +134,45 @@ export default function RoutePlanner() {
 
   async function afterDelivered() {
     setDeliverOpen(false);
+    
+    // Remove completed stop from route
+    if (deliverStop && route?.stops) {
+      const stopId = deliverStop.orderId || deliverStop.id || deliverStop._id;
+      const updatedStops = route.stops.filter(
+        (s) => (s.orderId || s.id || s._id) !== stopId
+      );
+      
+      // If no stops left, navigate to dashboard
+      if (updatedStops.length === 0) {
+        navigate("/driver");
+        return;
+      }
+      
+      // Update route with remaining stops
+      // Recalculate route distances and ETAs if needed
+      const updatedRoute = {
+        ...route,
+        stops: updatedStops,
+      };
+      
+      // Recalculate ETAs for remaining stops
+      let cumulativeMinutes = 0;
+      updatedRoute.stops = updatedRoute.stops.map((stop, index) => {
+        if (index === 0) {
+          cumulativeMinutes = stop.driveMinutesFromPrev || 0;
+        } else {
+          cumulativeMinutes += stop.driveMinutesFromPrev || 0;
+        }
+        return {
+          ...stop,
+          etaMinutes: cumulativeMinutes,
+        };
+      });
+      
+      setRoute(updatedRoute);
+    }
+    
     setDeliverStop(null);
-    // Navigate to driver dashboard after successful delivery
-    navigate("/driver");
   }
 
   return (

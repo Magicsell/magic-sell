@@ -3,13 +3,14 @@ import { useNavigate } from "react-router-dom";
 import {
   useReactTable,
   getCoreRowModel,
-  getSortedRowModel,
   flexRender,
   createColumnHelper,
 } from "@tanstack/react-table";
 import { apiGet, apiPatch, apiDelete } from "../../lib/api";
 import { Edit, Trash2, Plus, Search, CheckCircle, XCircle, User as UserIcon, Mail, Phone, MapPin, Clock } from "lucide-react";
 import Breadcrumb from "../../components/Breadcrumb";
+import Pagination from "../../components/Pagination";
+import { useTableSorting } from "../../hooks/useTableSorting";
 
 const columnHelper = createColumnHelper();
 
@@ -37,17 +38,26 @@ export default function Customers() {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
-  const [sorting, setSorting] = useState([{ id: "createdAt", desc: true }]);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
   const [pendingCount, setPendingCount] = useState(0);
-  const pageSize = 20;
+  
+  // Use sorting hook
+  const { sorting, setSorting, getSortParam } = useTableSorting({
+    defaultSort: [{ id: "createdAt", desc: true }],
+    onSortChange: (newSorting) => {
+      fetchUsers(page, statusFilter, q, pageSize, newSorting);
+    },
+  });
 
   // Fetch users and legacy customers
-  async function fetchUsers(nextPage = page, nextStatus = statusFilter, nextQ = q) {
+  async function fetchUsers(nextPage = page, nextStatus = statusFilter, nextQ = q, nextPageSize = pageSize, nextSorting = sorting) {
     setLoading(true);
     
     try {
       let users = [];
       let legacyCustomers = [];
+      let userData = null; // Declare userData at function scope
 
       // If statusFilter is "legacy", only fetch legacy customers
       if (nextStatus === "legacy") {
@@ -80,7 +90,7 @@ export default function Customers() {
         // Fetch new User model (role: customer only)
         const userParams = new URLSearchParams();
         userParams.set("page", String(nextPage));
-        userParams.set("pageSize", String(pageSize));
+        userParams.set("pageSize", String(nextPageSize));
         userParams.set("role", "customer"); // Only customers
         
         if (nextStatus === "approved") {
@@ -88,16 +98,26 @@ export default function Customers() {
         } else if (nextStatus === "pending") {
           userParams.set("isApproved", "false");
         }
+        
+        if (nextQ.trim()) {
+          userParams.set("q", nextQ.trim());
+        }
+        
+        // Add sorting parameter
+        const sortParam = getSortParam(nextSorting);
+        if (sortParam) {
+          userParams.set("sort", sortParam);
+        }
 
-        const userData = await apiGet(`/api/users?${userParams.toString()}`);
+        userData = await apiGet(`/api/users?${userParams.toString()}`);
         users = userData.users || [];
       }
 
       // Combine users and legacy customers (only if not legacy-only view)
       let allItems = nextStatus === "legacy" ? legacyCustomers : [...users];
       
-      // Client-side search
-      if (nextQ.trim()) {
+      // Client-side search (only for legacy, backend handles search for new users)
+      if (nextStatus === "legacy" && nextQ.trim()) {
         const searchLower = nextQ.toLowerCase();
         allItems = allItems.filter((item) => {
           const email = (item.email || "").toLowerCase();
@@ -108,21 +128,52 @@ export default function Customers() {
         });
       }
 
-      // Sort by createdAt (newest first)
-      allItems.sort((a, b) => {
-        const dateA = new Date(a.createdAt || 0);
-        const dateB = new Date(b.createdAt || 0);
-        return dateB - dateA;
-      });
+      // Client-side sorting only for legacy customers (new users are sorted by backend)
+      if (nextStatus === "legacy" && nextSorting && nextSorting.length > 0) {
+        const sortField = nextSorting[0].id;
+        const sortDir = nextSorting[0].desc ? -1 : 1;
+        allItems.sort((a, b) => {
+          let aVal = a[sortField];
+          let bVal = b[sortField];
+          if (sortField === "createdAt") {
+            aVal = new Date(aVal || 0);
+            bVal = new Date(bVal || 0);
+          } else if (typeof aVal === "string") {
+            aVal = aVal.toLowerCase();
+            bVal = (bVal || "").toLowerCase();
+          }
+          if (aVal < bVal) return -1 * sortDir;
+          if (aVal > bVal) return 1 * sortDir;
+          return 0;
+        });
+      } else if (nextStatus === "legacy") {
+        // Default sort by createdAt (newest first) for legacy
+        allItems.sort((a, b) => {
+          const dateA = new Date(a.createdAt || 0);
+          const dateB = new Date(b.createdAt || 0);
+          return dateB - dateA;
+        });
+      }
 
-      // Pagination (client-side for combined results)
-      const startIndex = (nextPage - 1) * pageSize;
-      const endIndex = startIndex + pageSize;
-      const paginatedItems = allItems.slice(startIndex, endIndex);
+      // Pagination (client-side for legacy, backend for new users)
+      let paginatedItems, totalCount, totalPages;
+      
+      if (nextStatus === "legacy") {
+        const startIndex = (nextPage - 1) * nextPageSize;
+        const endIndex = startIndex + nextPageSize;
+        paginatedItems = allItems.slice(startIndex, endIndex);
+        totalCount = allItems.length;
+        totalPages = Math.ceil(allItems.length / nextPageSize);
+      } else {
+        paginatedItems = allItems;
+        totalCount = Number(userData?.total || allItems.length);
+        totalPages = Number(userData?.pages || userData?.totalPages || 1);
+      }
       
       setRows(paginatedItems);
       setPage(nextPage);
-      setPages(Math.ceil(allItems.length / pageSize));
+      setPages(totalPages);
+      setTotal(totalCount);
       
       // Count pending approvals (only from new users, not legacy)
       const pending = users.filter((u) => u.role !== "admin" && !u.isApproved).length;
@@ -135,27 +186,38 @@ export default function Customers() {
   }
 
   useEffect(() => {
-    fetchUsers(1, statusFilter, q);
+    fetchUsers(1, statusFilter, q, pageSize, sorting);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // UI events
   function onChangeStatus(v) {
     setStatusFilter(v);
-    fetchUsers(1, v, q);
+    setPage(1);
+    fetchUsers(1, v, q, pageSize, sorting);
   }
 
   function onSearchSubmit(e) {
     e.preventDefault();
-    fetchUsers(1, statusFilter, q);
+    setPage(1);
+    fetchUsers(1, statusFilter, q, pageSize, sorting);
   }
-
-  function prev() {
-    if (page > 1) fetchUsers(page - 1, statusFilter, q);
-  }
-
-  function next() {
-    if (page < pages) fetchUsers(page + 1, statusFilter, q);
+  
+  // Auto-refresh when search is cleared
+  useEffect(() => {
+    if (!q.trim()) {
+      // Search is empty, refresh to show all
+      setPage(1);
+      fetchUsers(1, statusFilter, "", pageSize, sorting);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+  
+  function onChangePageSize(newSize) {
+    const newPageSize = Number(newSize);
+    setPageSize(newPageSize);
+    setPage(1);
+    fetchUsers(1, statusFilter, q, newPageSize, sorting);
   }
 
   // Approve user
@@ -163,7 +225,7 @@ export default function Customers() {
     if (!window.confirm("Approve this user?")) return;
     try {
       await apiPatch(`/api/users/${userId}/approve`);
-      await fetchUsers(page, statusFilter, q);
+      await fetchUsers(page, statusFilter, q, pageSize, sorting);
     } catch (e) {
       alert(e.message || "Failed to approve user");
     }
@@ -174,7 +236,7 @@ export default function Customers() {
     if (!window.confirm("Reject this user? This will deactivate their account.")) return;
     try {
       await apiPatch(`/api/users/${userId}/reject`);
-      await fetchUsers(page, statusFilter, q);
+      await fetchUsers(page, statusFilter, q, pageSize, sorting);
     } catch (e) {
       alert(e.message || "Failed to reject user");
     }
@@ -189,7 +251,7 @@ export default function Customers() {
       } else {
         await apiDelete(`/api/users/${itemId}`);
       }
-      await fetchUsers(page, statusFilter, q);
+      await fetchUsers(page, statusFilter, q, pageSize, sorting);
     } catch (e) {
       alert(e.message || "Failed to delete");
     }
@@ -345,7 +407,7 @@ export default function Customers() {
     data: rows,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
+    manualSorting: true, // Server-side sorting
     state: { sorting },
     onSortingChange: setSorting,
   });
@@ -472,29 +534,20 @@ export default function Customers() {
         </div>
 
         {/* Pagination */}
-        {pages > 1 && (
-          <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-between">
-            <div className="text-sm text-slate-400">
-              Page {page} of {pages}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={prev}
-                disabled={page === 1}
-                className="px-3 py-1.5 rounded-lg border bg-slate-800/50 text-slate-300 text-sm border-slate-700 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                Previous
-              </button>
-              <button
-                onClick={next}
-                disabled={page === pages}
-                className="px-3 py-1.5 rounded-lg border bg-slate-800/50 text-slate-300 text-sm border-slate-700 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
+        <Pagination
+          page={page}
+          pages={pages}
+          pageSize={pageSize}
+          total={total}
+          itemsCount={rows.length}
+          itemLabel="customers"
+          onPageChange={(newPage) => {
+            if (newPage >= 1 && newPage <= pages) {
+              fetchUsers(newPage, statusFilter, q, pageSize, sorting);
+            }
+          }}
+          onPageSizeChange={onChangePageSize}
+        />
       </div>
     </div>
   );

@@ -20,7 +20,7 @@ function ProductImage({ imageUrl, alt }) {
     normalizedUrl = imageUrl.replace("/uploads/products/", "/api/files/products/");
   }
   
-  const imageSrc = normalizedUrl.startsWith("http") 
+  const imageSrc = normalizedUrl.startsWith("http") || normalizedUrl.startsWith("data:")
     ? normalizedUrl 
     : normalizedUrl.startsWith("/") 
       ? `${API_URL}${normalizedUrl}`
@@ -158,7 +158,7 @@ export default function ProductSelectionModal({ open, onClose, onAddProduct, exi
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 overflow-y-auto">
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/70 backdrop-blur-sm"
@@ -166,7 +166,8 @@ export default function ProductSelectionModal({ open, onClose, onAddProduct, exi
       />
 
       {/* Modal */}
-      <div className="relative w-full max-w-5xl max-h-[90vh] bg-slate-900 rounded-xl border border-slate-800 shadow-2xl flex flex-col">
+      <div className="min-h-full flex items-center justify-center p-4">
+        <div className="relative z-10 w-full max-w-5xl max-h-[calc(100vh-2rem)] bg-slate-900 rounded-xl border border-slate-800 shadow-2xl flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-slate-800">
           <div>
@@ -364,6 +365,7 @@ export default function ProductSelectionModal({ open, onClose, onAddProduct, exi
             </button>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

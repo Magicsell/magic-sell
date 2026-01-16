@@ -133,17 +133,34 @@ export const getOrders = async (req, res) => {
 
     // güvenli sort
     const allowedSort = new Set([
+      "orderNo",
+      "-orderNo",
       "orderDate",
       "-orderDate",
       "createdAt",
       "-createdAt",
       "status",
       "-status",
+      "paymentMethod",
+      "-paymentMethod",
+      "totalAmount",
+      "-totalAmount",
+      "shopName",
+      "-shopName",
+      "customerName",
+      "-customerName",
     ]);
     const sortKey = allowedSort.has(sort) ? sort : "-orderDate";
     const sortObj = sortKey.startsWith("-")
       ? { [sortKey.slice(1)]: -1 }
       : { [sortKey]: 1 };
+    
+    console.log("[Orders API] Sort params:", { 
+      requested: sort, 
+      allowed: allowedSort.has(sort), 
+      sortKey, 
+      sortObj 
+    });
 
     // temel filtre
     const match = {};
@@ -151,14 +168,28 @@ export const getOrders = async (req, res) => {
 
     // q: serbest arama (regex; index opsiyonel)
     if (q && q.trim()) {
-      const rgx = new RegExp(q.trim(), "i");
-      match.$or = [
-        { orderNo: rgx },
+      const searchTerm = q.trim();
+      const rgx = new RegExp(searchTerm, "i");
+      const searchConditions = [
         { shopName: rgx },
         { customerName: rgx },
         { "customer.name": rgx },
         { notes: rgx },
       ];
+      
+      // orderNo is a Number field, so we need to handle it differently
+      // Only search by orderNo if the search term is a valid number
+      const orderNoNum = parseInt(searchTerm, 10);
+      // Check if search term is a pure number (no letters, just digits)
+      const isPureNumber = /^\d+$/.test(searchTerm);
+      
+      if (isPureNumber && !isNaN(orderNoNum) && orderNoNum > 0) {
+        // Search by orderNo as number (exact match)
+        // e.g., "300" matches orderNo 300
+        searchConditions.push({ orderNo: orderNoNum });
+      }
+      
+      match.$or = searchConditions;
     }
 
     // withGeo: rota ile bire bir aynı—lat/lng number olmalı
@@ -435,6 +466,7 @@ export const deliverOrder = async (req, res) => {
     const { id } = req.params;
     const {
       paymentMethod = "Not Set",
+      paymentBreakdown = null,
       notes = null,
       proofUrl = null,
     } = req.body || {};
@@ -450,6 +482,17 @@ export const deliverOrder = async (req, res) => {
 
     order.status = "delivered";
     order.paymentMethod = paymentMethod;
+    
+    // Update payment breakdown if provided
+    if (paymentBreakdown && typeof paymentBreakdown === 'object') {
+      order.paymentBreakdown = {
+        balanceAmount: Number(paymentBreakdown.balanceAmount || 0),
+        cashAmount: Number(paymentBreakdown.cashAmount || 0),
+        cardAmount: Number(paymentBreakdown.cardAmount || 0),
+        bankAmount: Number(paymentBreakdown.bankAmount || 0),
+      };
+    }
+    
     if (notes !== undefined) order.deliveryNotes = notes;
     if (proofUrl) order.proofUrl = proofUrl;
     order.deliveredAt = new Date();
@@ -461,6 +504,7 @@ export const deliverOrder = async (req, res) => {
         _id: order._id,
         status: order.status,
         paymentMethod: order.paymentMethod,
+        paymentBreakdown: order.paymentBreakdown,
         deliveredAt: order.deliveredAt,
         proofUrl: order.proofUrl,
       },

@@ -11,6 +11,8 @@ import { apiGet } from "../../lib/api";
 import { StatusBadge, PaymentBadge } from "../../components/Badges";
 import { Truck, Clock, Search, MapPin, CheckSquare, Square } from "lucide-react";
 import Breadcrumb from "../../components/Breadcrumb";
+import Pagination from "../../components/Pagination";
+import { useTableSorting } from "../../hooks/useTableSorting";
 
 const columnHelper = createColumnHelper();
 
@@ -40,14 +42,42 @@ export default function DriverHome() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all"); // all, pending, delivered
   const [q, setQ] = useState("");
-  const [sorting, setSorting] = useState([{ id: "orderDate", desc: true }]);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
   const [selectedOrderIds, setSelectedOrderIds] = useState(new Set());
+  
+  // Use sorting hook
+  const { sorting, setSorting, getSortParam } = useTableSorting({
+    defaultSort: [{ id: "orderDate", desc: true }],
+    onSortChange: (newSorting) => {
+      load(page, statusFilter, q, pageSize, newSorting);
+    },
+  });
 
-  async function load() {
+  async function load(nextPage = page, nextStatus = statusFilter, nextQ = q, nextPageSize = pageSize, nextSorting = sorting) {
     setLoading(true);
     try {
-      const d = await apiGet("/api/orders?page=1&pageSize=100");
-      setRows(d.items ?? []);
+      const params = new URLSearchParams();
+      params.set("page", String(nextPage));
+      params.set("pageSize", String(nextPageSize));
+      
+      // Add sorting parameter
+      const sortParam = getSortParam(nextSorting);
+      if (sortParam) {
+        params.set("sort", sortParam);
+      }
+      
+      if (nextStatus !== "all") params.set("status", nextStatus);
+      if (nextQ.trim()) params.set("q", nextQ.trim());
+      
+      const d = await apiGet(`/api/orders?${params.toString()}`);
+      const orders = d.items ?? [];
+      setRows(orders);
+      setPage(Number(d.page || nextPage));
+      setPages(Number(d.pages || d.totalPages || 1));
+      setTotal(Number(d.total || orders.length));
     } catch (e) {
       console.error("Failed to load orders:", e);
     } finally {
@@ -56,33 +86,21 @@ export default function DriverHome() {
   }
 
   useEffect(() => {
-    load();
-  }, []);
-
-  // Filter and search
-  const filteredRows = useMemo(() => {
-    let filtered = rows;
-    
-    // Status filter
-    if (statusFilter === "pending") {
-      filtered = filtered.filter(o => (o.status || "").toLowerCase() !== "delivered");
-    } else if (statusFilter === "delivered") {
-      filtered = filtered.filter(o => (o.status || "").toLowerCase() === "delivered");
+    load(1, statusFilter, q, pageSize, sorting);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter]);
+  
+  // Auto-refresh when search is cleared
+  useEffect(() => {
+    if (!q.trim()) {
+      // Search is empty, refresh to show all
+      setPage(1);
+      load(1, statusFilter, "", pageSize, sorting);
     }
-    
-    // Search
-    if (q.trim()) {
-      const searchLower = q.toLowerCase();
-      filtered = filtered.filter((o) => {
-        const shopName = (o.shopName || "").toLowerCase();
-        const customerName = (o.customerName || "").toLowerCase();
-        const orderNo = String(o.orderNo || "").toLowerCase();
-        return shopName.includes(searchLower) || customerName.includes(searchLower) || orderNo.includes(searchLower);
-      });
-    }
-    
-    return filtered;
-  }, [rows, statusFilter, q]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+  
+  const filteredRows = rows; // Backend handles filtering now
 
   // Statistics
   const stats = useMemo(() => {
@@ -213,6 +231,25 @@ export default function DriverHome() {
         },
         size: 50,
       }),
+      columnHelper.accessor("orderNo", {
+        header: "#",
+        cell: (info) => {
+          const order = info.row.original;
+          function pad(n) {
+            if (n == null) return "—";
+            const s = String(n);
+            return s.length >= 4 ? s : "0".repeat(4 - s.length) + s;
+          }
+          return (
+            <button
+              onClick={() => navigate(`/driver/orders/edit?id=${order._id}`)}
+              className="font-medium text-slate-200 hover:text-sky-400 transition-colors"
+            >
+              #{pad(info.getValue())}
+            </button>
+          );
+        },
+      }),
       columnHelper.accessor("orderDate", {
         header: "Date",
         cell: (info) => (
@@ -253,7 +290,7 @@ export default function DriverHome() {
     data: filteredRows,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
+    manualSorting: true, // Server-side sorting
     state: { sorting },
     onSortingChange: setSorting,
   });
@@ -315,13 +352,25 @@ export default function DriverHome() {
         <div className="flex items-center gap-3 flex-wrap">
           {/* Status Filter Tabs */}
           <div className="flex items-center gap-2">
-            <Tab active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>
+            <Tab active={statusFilter === "all"} onClick={() => {
+              setStatusFilter("all");
+              setPage(1);
+              load(1, "all", q, pageSize, sorting);
+            }}>
               All ({stats.all})
             </Tab>
-            <Tab active={statusFilter === "pending"} onClick={() => setStatusFilter("pending")}>
+            <Tab active={statusFilter === "pending"} onClick={() => {
+              setStatusFilter("pending");
+              setPage(1);
+              load(1, "pending", q, pageSize, sorting);
+            }}>
               Pending ({stats.pending})
             </Tab>
-            <Tab active={statusFilter === "delivered"} onClick={() => setStatusFilter("delivered")}>
+            <Tab active={statusFilter === "delivered"} onClick={() => {
+              setStatusFilter("delivered");
+              setPage(1);
+              load(1, "delivered", q, pageSize, sorting);
+            }}>
               Delivered ({stats.delivered})
             </Tab>
           </div>
@@ -331,6 +380,8 @@ export default function DriverHome() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
+            setPage(1);
+            load(1, statusFilter, q, pageSize, sorting);
           }}
           className="flex items-center gap-2"
         >
@@ -414,6 +465,26 @@ export default function DriverHome() {
               })}
             </tbody>
           </table>
+          
+          {/* Pagination */}
+          <Pagination
+            page={page}
+            pages={pages}
+            pageSize={pageSize}
+            total={total}
+            itemsCount={rows.length}
+            itemLabel="orders"
+            onPageChange={(newPage) => {
+              if (newPage >= 1 && newPage <= pages) {
+                load(newPage, statusFilter, q, pageSize, sorting);
+              }
+            }}
+            onPageSizeChange={(newPageSize) => {
+              setPageSize(newPageSize);
+              setPage(1);
+              load(1, statusFilter, q, newPageSize, sorting);
+            }}
+          />
         </div>
       )}
     </div>

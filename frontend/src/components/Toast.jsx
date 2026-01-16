@@ -37,7 +37,7 @@ export function useToast() {
 }
 
 export function ToastContainer({ toasts, onRemove }) {
-  if (toasts.length === 0) return null;
+  if (!toasts || toasts.length === 0) return null;
 
   return createPortal(
     <div style={toastContainer}>

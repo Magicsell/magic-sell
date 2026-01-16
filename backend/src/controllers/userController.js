@@ -9,7 +9,7 @@ import { requireRole } from "../middleware/auth.js";
  */
 export async function getUsers(req, res) {
   try {
-    const { role, isApproved, isActive, page = 1, pageSize = 20 } = req.query;
+    const { role, isApproved, isActive, page = 1, pageSize = 20, q, sort = "-createdAt" } = req.query;
     const organizationId = req.organizationId;
 
     // Build query
@@ -27,6 +27,34 @@ export async function getUsers(req, res) {
       query.isActive = isActive === "true" || isActive === true;
     }
 
+    // Search functionality
+    if (q && q.trim()) {
+      const searchRegex = new RegExp(q.trim(), "i");
+      query.$or = [
+        { email: searchRegex },
+        { "customerProfile.name": searchRegex },
+        { "customerProfile.phone": searchRegex },
+        { "driverProfile.name": searchRegex },
+        { "driverProfile.phone": searchRegex },
+      ];
+    }
+
+    // Safe sort
+    const allowedSort = new Set([
+      "createdAt",
+      "-createdAt",
+      "email",
+      "-email",
+      "isApproved",
+      "-isApproved",
+      "isActive",
+      "-isActive",
+    ]);
+    const sortKey = allowedSort.has(sort) ? sort : "-createdAt";
+    const sortObj = sortKey.startsWith("-")
+      ? { [sortKey.slice(1)]: -1 }
+      : { [sortKey]: 1 };
+
     // Pagination
     const skip = (parseInt(page) - 1) * parseInt(pageSize);
     const limit = parseInt(pageSize);
@@ -34,21 +62,26 @@ export async function getUsers(req, res) {
     // Get users
     const users = await User.find(query)
       .select("-password")
-      .sort({ createdAt: -1 })
+      .sort(sortObj)
       .skip(skip)
       .limit(limit)
       .lean();
 
     // Get total count
     const total = await User.countDocuments(query);
+    const totalPages = Math.ceil(total / parseInt(pageSize));
 
     res.json({
       users,
+      page: parseInt(page),
+      pages: totalPages,
+      totalPages: totalPages,
+      total,
       pagination: {
         page: parseInt(page),
         pageSize: parseInt(pageSize),
         total,
-        totalPages: Math.ceil(total / parseInt(pageSize)),
+        totalPages: totalPages,
       },
     });
   } catch (error) {

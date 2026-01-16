@@ -80,6 +80,7 @@ export default function Router() {
         >
           <Route index element={<DriverHome />} />
           <Route path="route" element={<RoutePlanner />} />
+          <Route path="orders/edit" element={<OrderForm />} />
         </Route>
 
         {/* Customer */}

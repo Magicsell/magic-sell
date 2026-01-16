@@ -2,6 +2,15 @@ import { createPortal } from "react-dom";
 import { API_URL } from "../lib/config";
 import { ShoppingCart, Image as ImageIcon } from "lucide-react";
 
+/* helpers */
+function pad(n) {
+  const s = String(n ?? "");
+  return s.length >= 4 ? s : "0".repeat(4 - s.length) + s;
+}
+function shortId(id) {
+  return id ? String(id).slice(-6) : "-";
+}
+
 export default function OrderProofModal({ open, onClose, order }) {
   if (!open) return null;
 
@@ -43,20 +52,21 @@ export default function OrderProofModal({ open, onClose, order }) {
     : "-";
 
   return createPortal(
-    <div className="fixed inset-0 z-[9999]">
+    <div className="fixed inset-0 z-[9999] overflow-y-auto">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div
-        className="absolute left-1/2 top-1/2 w-[90vw] max-w-2xl -translate-x-1/2 -translate-y-1/2
-                    rounded-xl border border-slate-800 bg-slate-900 p-4 shadow-2xl"
-      >
-        <div className="flex items-center justify-between mb-3">
+      <div className="min-h-full flex items-center justify-center p-4">
+        <div
+          className="relative z-10 w-[90vw] max-w-2xl max-h-[calc(100vh-2rem)]
+                      rounded-xl border border-slate-800 bg-slate-900 p-4 shadow-2xl flex flex-col"
+        >
+        <div className="flex items-center justify-between mb-3 flex-shrink-0">
           <div className="text-lg font-semibold">Order #{displayNo}</div>
           <button className="text-slate-400 hover:text-white" onClick={onClose}>
             ✕
           </button>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-4">
+        <div className="grid md:grid-cols-2 gap-4 overflow-y-auto flex-1 min-h-0">
           <div className="rounded-lg overflow-hidden bg-slate-950 border border-slate-800 min-h-[220px] grid place-items-center">
             {proofSrc ? (
               // object-contain: büyük foto taşmasın
@@ -167,16 +177,8 @@ export default function OrderProofModal({ open, onClose, order }) {
           </div>
         )}
       </div>
+      </div>
     </div>,
     document.body
   );
-}
-
-/* helpers */
-function pad(n) {
-  const s = String(n ?? "");
-  return s.length >= 4 ? s : "0".repeat(4 - s.length) + s;
-}
-function shortId(id) {
-  return id ? String(id).slice(-6) : "-";
 }

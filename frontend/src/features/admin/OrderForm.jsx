@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import Breadcrumb from "../../components/Breadcrumb";
 import { apiGet, apiPost, apiPatch } from "../../lib/api";
 import { Plus, X, Trash2, ShoppingCart, FileText, User, MapPin, Calendar, CreditCard } from "lucide-react";
 import ProductSelectionModal from "../../components/ProductSelectionModal";
 import { API_URL } from "../../lib/config";
+import { getUser } from "../auth/auth";
+import { useApiError } from "../../hooks/useApiError";
+import { useToast, ToastContainer } from "../../components/Toast";
 
 /* ==== UK validators & formatters ==== */
 const UK_POSTCODE_RE =
@@ -99,6 +102,9 @@ export default function OrderForm() {
   const [searchParams] = useSearchParams();
   const orderId = searchParams.get("id");
   const expectedOrderNo = searchParams.get("expectedOrderNo");
+  const user = getUser();
+  const isDriver = user?.role === "driver";
+  const isAdmin = user?.role === "admin";
 
   const isEdit = !!orderId;
   const isNew = location.pathname.includes("/new");
@@ -128,6 +134,10 @@ export default function OrderForm() {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
+  
+  // Toast and error handling
+  const { showToast, toasts, removeToast } = useToast();
+  const handleApiError = useApiError();
   const [showList, setShowList] = useState(false);
   const [showProductModal, setShowProductModal] = useState(false);
 
@@ -486,7 +496,7 @@ export default function OrderForm() {
   function calculateTotal() {
     setForm((prev) => {
       const itemsTotal = prev.items.reduce((sum, item) => sum + (item.subtotal || 0), 0);
-      // If items exist, use items total, otherwise keep manual amount
+      // If items exist, use items total, otherwise clear total amount
       if (prev.items.length > 0 && itemsTotal > 0) {
         const newTotal = itemsTotal;
         // Auto-adjust payment breakdown if payment method is set
@@ -507,6 +517,9 @@ export default function OrderForm() {
           newBreakdown = { balanceAmount: 0, cashAmount: 0, cardAmount: 0, bankAmount: newTotal };
         }
         return { ...prev, totalAmount: String(newTotal.toFixed(2)), paymentBreakdown: newBreakdown };
+      } else if (prev.items.length === 0) {
+        // Clear total amount when no items
+        return { ...prev, totalAmount: "", paymentBreakdown: { balanceAmount: 0, cashAmount: 0, cardAmount: 0, bankAmount: 0 } };
       }
       return prev;
     });
@@ -529,15 +542,20 @@ export default function OrderForm() {
     }
   }, [form.totalAmount, form.paymentMethod, customerBalance]);
 
-  // Validation
-  const v = useMemo(() => {
+  // Validation - only runs when needed (not on initial render)
+  const validateForm = useCallback(() => {
     const errors = {};
     if (!form.shopName.trim()) errors.shopName = "Shop name is required.";
-    const amountOk =
-      form.totalAmount !== "" &&
-      !isNaN(Number(form.totalAmount)) &&
-      Number(form.totalAmount) >= 0;
-    if (!amountOk) errors.totalAmount = "Enter a valid amount (e.g. 12.50).";
+    // Require items to be added before allowing total amount
+    if (form.items.length === 0) {
+      errors.totalAmount = "Please add products first before entering total amount.";
+    } else {
+      const amountOk =
+        form.totalAmount !== "" &&
+        !isNaN(Number(form.totalAmount)) &&
+        Number(form.totalAmount) >= 0;
+      if (!amountOk) errors.totalAmount = "Enter a valid amount (e.g. 12.50).";
+    }
     if (form.customerPhone && !isValidUKPhone(form.customerPhone))
       errors.customerPhone = "Enter a valid UK phone (07… or +44…).";
     if (form.customerPostcode && !isValidUKPostcode(form.customerPostcode))
@@ -551,7 +569,8 @@ export default function OrderForm() {
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
-    if (!v.ok) return;
+    const validation = validateForm();
+    if (!validation.ok) return;
 
     // Find customer user ID if customerName matches
     let customerId = null;
@@ -605,8 +624,11 @@ export default function OrderForm() {
       } else {
         await apiPost("/api/orders", payload);
       }
+      showToast(isEdit ? "Order updated successfully" : "Order created successfully", "success");
       navigate("/admin/orders");
     } catch (e) {
+      handleApiError(e);
+      // Also set error for inline display (optional, can remove if only toast is desired)
       setErr(e.message || (isEdit ? "Failed to save order." : "Failed to create order."));
     } finally {
       setBusy(false);
@@ -627,7 +649,7 @@ export default function OrderForm() {
     <div className="max-w-6xl mx-auto">
         <Breadcrumb
           items={[
-            { label: "Orders", path: "/admin/orders" },
+            { label: isDriver ? "Driver" : "Orders", path: isDriver ? "/driver" : "/admin/orders" },
             { label: isEdit ? "Edit Order" : "New Order", path: location.pathname },
           ]}
         />
@@ -664,11 +686,13 @@ export default function OrderForm() {
                 value={form.shopName}
                 onChange={onChange}
                 onFocus={() => {
-                  if (filteredShops.length > 0) {
+                  if (filteredShops.length > 0 && !isDriver) {
                     setShowList(true);
                   }
                 }}
-                className={INPUT_CLS}
+                disabled={isDriver}
+                readOnly={isDriver}
+                className={`${INPUT_CLS} ${isDriver ? 'opacity-60 cursor-not-allowed' : ''}`}
                 autoComplete="off"
               />
               {showList && filteredShops.length > 0 && (
@@ -700,7 +724,9 @@ export default function OrderForm() {
                   name="customerName"
                   value={form.customerName}
                   onChange={onChange}
-                  className={INPUT_CLS}
+                  disabled={isDriver}
+                  readOnly={isDriver}
+                  className={`${INPUT_CLS} ${isDriver ? 'opacity-60 cursor-not-allowed' : ''}`}
                   placeholder="Customer name"
                 />
               </Field>
@@ -709,8 +735,10 @@ export default function OrderForm() {
                   name="customerPhone"
                   value={form.customerPhone}
                   onChange={onChange}
+                  disabled={isDriver}
+                  readOnly={isDriver}
+                  className={`${INPUT_CLS} ${isDriver ? 'opacity-60 cursor-not-allowed' : ''}`}
                   placeholder="+44… or 07…"
-                  className={INPUT_CLS}
                 />
               </Field>
             </div>
@@ -720,7 +748,9 @@ export default function OrderForm() {
                 name="customerAddress"
                 value={form.customerAddress}
                 onChange={onChange}
-                className={INPUT_CLS}
+                disabled={isDriver}
+                readOnly={isDriver}
+                className={`${INPUT_CLS} ${isDriver ? 'opacity-60 cursor-not-allowed' : ''}`}
                 placeholder="Customer address"
               />
             </Field>
@@ -731,8 +761,10 @@ export default function OrderForm() {
                   name="customerPostcode"
                   value={form.customerPostcode}
                   onChange={onChange}
+                  disabled={isDriver}
+                  readOnly={isDriver}
+                  className={`${INPUT_CLS} ${isDriver ? 'opacity-60 cursor-not-allowed' : ''}`}
                   placeholder="SW1A 1AA"
-                  className={INPUT_CLS}
                 />
               </Field>
               <Field label="Order date" error={fieldErrors.orderDate} required icon={Calendar}>
@@ -741,7 +773,9 @@ export default function OrderForm() {
                   name="orderDate"
                   value={form.orderDate}
                   onChange={onChange}
-                  className={INPUT_CLS}
+                  disabled={isDriver}
+                  readOnly={isDriver}
+                  className={`${INPUT_CLS} ${isDriver ? 'opacity-60 cursor-not-allowed' : ''}`}
                 />
               </Field>
             </div>
@@ -749,16 +783,18 @@ export default function OrderForm() {
 
           {/* Order Items (Optional) */}
           <Section title="Order Items (Optional)" icon={ShoppingCart}>
-            <div className="flex justify-end mb-4">
-              <button
-                type="button"
-                onClick={() => setShowProductModal(true)}
-                className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 transition-colors"
-              >
-                <ShoppingCart className="w-4 h-4" />
-                Add Products
-              </button>
-            </div>
+            {!isDriver && (
+              <div className="flex justify-end mb-4">
+                <button
+                  type="button"
+                  onClick={() => setShowProductModal(true)}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 transition-colors"
+                >
+                  <ShoppingCart className="w-4 h-4" />
+                  Add Products
+                </button>
+              </div>
+            )}
 
             {form.items.length === 0 ? (
               <div className="text-center py-8 rounded-lg border-2 border-dashed border-slate-700 bg-slate-800/20">
@@ -819,40 +855,48 @@ export default function OrderForm() {
 
                       {/* Quantity */}
                       <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => updateProductItem(index, "quantity", Math.max(1, (item.quantity || 1) - 1))}
-                          className="p-1.5 rounded border border-slate-700 bg-slate-800/50 text-slate-300 hover:bg-slate-800 transition-colors"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                        {!isDriver && (
+                          <button
+                            type="button"
+                            onClick={() => updateProductItem(index, "quantity", Math.max(1, (item.quantity || 1) - 1))}
+                            className="p-1.5 rounded border border-slate-700 bg-slate-800/50 text-slate-300 hover:bg-slate-800 transition-colors"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <input
                           type="number"
                           min="1"
                           max="9999"
                           value={item.quantity || ""}
                           onChange={(e) => {
+                            if (isDriver) return;
                             const val = e.target.value;
                             // Remove leading zeros
                             const cleanVal = val === "" ? "" : val.replace(/^0+/, "") || "0";
                             const numVal = cleanVal === "" ? 1 : Number(cleanVal) || 1;
                             updateProductItem(index, "quantity", Math.max(1, numVal));
                           }}
+                          disabled={isDriver}
+                          readOnly={isDriver}
+                          className={`w-16 px-2 py-1.5 text-center rounded border border-slate-700 bg-slate-800/50 text-slate-100 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 ${isDriver ? 'opacity-60 cursor-not-allowed' : ''}`}
                           onBlur={(e) => {
+                            if (isDriver) return;
                             // Ensure minimum value of 1
                             if (!e.target.value || Number(e.target.value) < 1) {
                               updateProductItem(index, "quantity", 1);
                             }
                           }}
-                          className="w-16 px-2 py-1.5 text-center text-sm rounded border border-slate-700 bg-slate-900 text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                         />
-                        <button
-                          type="button"
-                          onClick={() => updateProductItem(index, "quantity", (item.quantity || 1) + 1)}
-                          className="p-1.5 rounded border border-slate-700 bg-slate-800/50 text-slate-300 hover:bg-slate-800 transition-colors"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
+                        {!isDriver && (
+                          <button
+                            type="button"
+                            onClick={() => updateProductItem(index, "quantity", (item.quantity || 1) + 1)}
+                            className="p-1.5 rounded border border-slate-700 bg-slate-800/50 text-slate-300 hover:bg-slate-800 transition-colors"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
 
                       {/* Price (Display only) */}
@@ -871,13 +915,15 @@ export default function OrderForm() {
                       </div>
 
                       {/* Remove */}
-                      <button
-                        type="button"
-                        onClick={() => removeProductItem(index)}
-                        className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors flex-shrink-0"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {!isDriver && (
+                        <button
+                          type="button"
+                          onClick={() => removeProductItem(index)}
+                          className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors flex-shrink-0"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -911,16 +957,22 @@ export default function OrderForm() {
                     inputMode="decimal"
                     value={form.totalAmount}
                     onChange={onChange}
-                    className={INPUT_CLS}
+                    disabled={isDriver || form.items.length === 0}
+                    readOnly={isDriver || form.items.length === 0}
+                    className={`${INPUT_CLS} ${(isDriver || form.items.length === 0) ? 'opacity-60 cursor-not-allowed' : ''}`}
                     placeholder="0.00"
                   />
                 </Field>
                 <div className="h-4">
-                  {itemsTotal > 0 && (
+                  {form.items.length === 0 ? (
+                    <p className="text-xs text-amber-400">
+                      Please add products first to enable total amount.
+                    </p>
+                  ) : itemsTotal > 0 ? (
                     <p className="text-xs text-slate-500">
                       Items total: £{itemsTotal.toFixed(2)}. You can override manually.
                     </p>
-                  )}
+                  ) : null}
                 </div>
               </div>
               <Field label="Payment method" icon={CreditCard}>
@@ -1047,8 +1099,9 @@ export default function OrderForm() {
           <div className="flex gap-3 pt-4 border-t border-slate-700">
             <button
               type="submit"
-              disabled={busy || !v.ok}
+              disabled={busy || form.items.length === 0}
               className="px-6 py-3 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+              title={form.items.length === 0 ? "Please add products first" : ""}
             >
               {busy ? "Saving…" : isEdit ? "Save Order" : "Save Order"}
             </button>
@@ -1061,6 +1114,9 @@ export default function OrderForm() {
             </button>
           </div>
         </form>
+        
+        {/* Toast Container */}
+        <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { API_URL } from "../../lib/config";
 import { Search, ShoppingCart, Image as ImageIcon, Plus, Minus, X, Package, ChevronDown } from "lucide-react";
 import Breadcrumb from "../../components/Breadcrumb";
 import { useToast, ToastContainer } from "../../components/Toast";
+import Pagination from "../../components/Pagination";
 
 // Product Image Component
 function ProductImage({ imageUrl, alt, category }) {
@@ -16,7 +17,7 @@ function ProductImage({ imageUrl, alt, category }) {
   }
   
   const imageSrc = imageUrl && !imgError
-    ? (normalizedUrl.startsWith("http") 
+    ? (normalizedUrl.startsWith("http") || normalizedUrl.startsWith("data:")
         ? normalizedUrl 
         : normalizedUrl.startsWith("/") 
           ? `${API_URL}${normalizedUrl}`
@@ -183,6 +184,10 @@ export default function CustomerProducts() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [categories, setCategories] = useState([]);
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
   const [cart, setCart] = useState([]);
 
   const cartRef = useRef([]);
@@ -252,18 +257,22 @@ export default function CustomerProducts() {
     loadCategories();
   }, []);
 
-  async function loadProducts() {
+  async function loadProducts(nextPage = page, nextCategory = categoryFilter, nextQ = q, nextPageSize = pageSize) {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      params.set("page", "1");
-      params.set("pageSize", "100");
+      params.set("page", String(nextPage));
+      params.set("pageSize", String(nextPageSize));
       params.set("isActive", "true"); // Only show active products
-      if (categoryFilter !== "all") params.set("category", categoryFilter);
-      if (q.trim()) params.set("q", q.trim());
+      if (nextCategory !== "all") params.set("category", nextCategory);
+      if (nextQ.trim()) params.set("q", nextQ.trim());
 
       const data = await apiGet(`/api/products?${params.toString()}`);
-      setProducts(data.items || []);
+      const list = Array.isArray(data) ? data : data.items ?? [];
+      setProducts(list);
+      setPage(Number(data.page || nextPage));
+      setPages(Number(data.pages || data.totalPages || 1));
+      setTotal(Number(data.total || list.length));
     } catch (e) {
       console.error("Failed to load products:", e);
     } finally {
@@ -279,8 +288,19 @@ export default function CustomerProducts() {
   }
 
   useEffect(() => {
-    loadProducts();
-  }, [categoryFilter, q]);
+    loadProducts(1, categoryFilter, q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryFilter]);
+  
+  // Auto-refresh when search is cleared
+  useEffect(() => {
+    if (!q.trim()) {
+      // Search is empty, refresh to show all
+      setPage(1);
+      loadProducts(1, categoryFilter, "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
   function getProductQuantity(productId) {
     // Always read from localStorage to get the latest cart state
@@ -401,7 +421,11 @@ export default function CustomerProducts() {
         <div className="relative w-full sm:w-auto">
           <select
             value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
+            onChange={(e) => {
+              setCategoryFilter(e.target.value);
+              setPage(1);
+              loadProducts(1, e.target.value, q);
+            }}
             className="appearance-none pl-4 pr-10 py-2 rounded-lg border border-slate-700 bg-slate-800/50 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-slate-600 focus:border-transparent w-full sm:w-48 cursor-pointer"
           >
             <option value="all">All Categories</option>
@@ -418,7 +442,8 @@ export default function CustomerProducts() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            loadProducts();
+            setPage(1);
+            loadProducts(1, categoryFilter, q);
           }}
           className="flex gap-2 w-full sm:w-auto"
         >
@@ -451,20 +476,43 @@ export default function CustomerProducts() {
           <div className="text-sm">No products found</div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {products.map((product) => {
-            const cartQuantity = getProductQuantity(product._id);
-            return (
-              <ProductCard
-                key={product._id}
-                product={product}
-                cartQuantity={cartQuantity}
-                onAddToCart={(qty) => addToCart(product, qty)}
-                onNavigate={() => navigate(`/customer/products/${product._id}`)}
-              />
-            );
-          })}
-        </div>
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {products.map((product) => {
+              const cartQuantity = getProductQuantity(product._id);
+              return (
+                <ProductCard
+                  key={product._id}
+                  product={product}
+                  cartQuantity={cartQuantity}
+                  onAddToCart={(qty) => addToCart(product, qty)}
+                  onNavigate={() => navigate(`/customer/products/${product._id}`)}
+                />
+              );
+            })}
+          </div>
+          
+          {/* Pagination */}
+          <Pagination
+            page={page}
+            pages={pages}
+            pageSize={pageSize}
+            total={total}
+            itemsCount={products.length}
+            itemLabel="products"
+            onPageChange={(newPage) => {
+              if (newPage >= 1 && newPage <= pages) {
+                loadProducts(newPage, categoryFilter, q);
+              }
+            }}
+            onPageSizeChange={(newPageSize) => {
+              setPageSize(newPageSize);
+              setPage(1);
+              loadProducts(1, categoryFilter, q, newPageSize);
+            }}
+            className="mt-8 rounded-b-xl"
+          />
+        </>
       )}
 
       {/* Toast Container */}

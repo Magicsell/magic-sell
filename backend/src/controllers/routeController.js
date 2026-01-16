@@ -96,6 +96,9 @@ function computeRoute({ start, end, stops, roundTrip = true, serviceMin = 5, avg
       driveMinutesFromPrev: Math.round(dMin),
       cumulativeDistanceKm: Number(totalKm.toFixed(2)),
       etaMinutes: Math.round(driveMin + serviceTotal),
+      // Preserve postcode and address for frontend geocoding
+      postcode: s.postcode || "",
+      address: s.address || "",
     });
     prev = s;
   }
@@ -158,7 +161,6 @@ export async function planFromOrders(req, res) {
 
     // Filter by specific order IDs if provided
     if (orderIds && Array.isArray(orderIds) && orderIds.length > 0) {
-      console.log("[planFromOrders] Received orderIds:", orderIds);
       const validIds = orderIds
         .filter(id => id && typeof id === "string")
         .map(id => {
@@ -170,21 +172,16 @@ export async function planFromOrders(req, res) {
         })
         .filter(Boolean);
       
-      console.log("[planFromOrders] Valid orderIds:", validIds.map(id => id.toString()));
-      
       if (validIds.length > 0) {
         // When specific order IDs are provided, only filter by IDs (ignore status)
         match._id = { $in: validIds };
-        console.log("[planFromOrders] Filtering by orderIds only, match:", JSON.stringify(match));
       } else {
         // No valid IDs, return empty result
-        console.log("[planFromOrders] No valid order IDs, returning empty");
         return res.json({ message: "No valid order IDs provided", totalDistanceKm: 0, stops: [] });
       }
     } else {
       // No orderIds provided, use status filter for all pending orders
       match.status = { $in: statuses };
-      console.log("[planFromOrders] No orderIds provided, using all pending orders");
     }
 
     // Tenant filter
@@ -196,9 +193,6 @@ export async function planFromOrders(req, res) {
       .select("_id shopName customerName customerAddress customerPostcode totalAmount paymentMethod paymentBreakdown geo")
       .lean();
 
-    console.log("[planFromOrders] Found orders:", orders.length);
-    console.log("[planFromOrders] Order IDs:", orders.map(o => o._id.toString()));
-
     if (!orders.length) {
       return res.json({ message: "No orders with geo for given filter", totalDistanceKm: 0, stops: [] });
     }
@@ -206,7 +200,8 @@ export async function planFromOrders(req, res) {
     const stops = orders.map(o => ({
       id: String(o._id),
       name: o.shopName || o.customerName || String(o._id),
-      address: [o.customerAddress, o.customerPostcode].filter(Boolean).join(", "),
+      address: o.customerAddress || "",
+      postcode: o.customerPostcode || "",
       lat: o.geo.lat,
       lng: o.geo.lng,
       orderId: String(o._id),
@@ -221,6 +216,7 @@ export async function planFromOrders(req, res) {
     }));
 
     const route = computeRoute({ start, end, stops, roundTrip, serviceMin, avgSpeedKmh, opt });
+    
     res.json(route);
   } catch (e) {
     res.status(500).json({ error: e.message });

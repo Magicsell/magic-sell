@@ -11,6 +11,8 @@ import { StatusBadge, PaymentBadge } from "../../components/Badges";
 import OrderProofModal from "../../components/OrderProofModal";
 import { Eye, Search, Package, Clock, CheckCircle } from "lucide-react";
 import Breadcrumb from "../../components/Breadcrumb";
+import Pagination from "../../components/Pagination";
+import { useTableSorting } from "../../hooks/useTableSorting";
 
 const columnHelper = createColumnHelper();
 
@@ -52,7 +54,18 @@ export default function CustomerOrders() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");
   const [q, setQ] = useState("");
-  const [sorting, setSorting] = useState([{ id: "orderDate", desc: true }]);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  
+  // Use sorting hook
+  const { sorting, setSorting, getSortParam } = useTableSorting({
+    defaultSort: [{ id: "orderDate", desc: true }],
+    onSortChange: (newSorting) => {
+      loadOrders(page, statusFilter, q, pageSize, newSorting);
+    },
+  });
 
   // Proof modal
   const [proofOpen, setProofOpen] = useState(false);
@@ -62,21 +75,29 @@ export default function CustomerOrders() {
     loadOrders();
   }, []);
 
-  async function loadOrders() {
+  async function loadOrders(nextPage = page, nextStatus = statusFilter, nextQ = q, nextPageSize = pageSize, nextSorting = sorting) {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      params.set("page", "1");
-      params.set("pageSize", "100");
-      params.set("sort", "-orderDate");
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      if (q.trim()) params.set("q", q.trim());
+      params.set("page", String(nextPage));
+      params.set("pageSize", String(nextPageSize));
+      
+      // Add sorting parameter
+      const sortParam = getSortParam(nextSorting);
+      if (sortParam) {
+        params.set("sort", sortParam);
+      }
+      
+      if (nextStatus !== "all") params.set("status", nextStatus);
+      if (nextQ.trim()) params.set("q", nextQ.trim());
 
       const data = await apiGet(`/api/orders?${params.toString()}`);
       const orders = data.items || [];
       
-      // Backend already filters by customer, so we can use orders directly
       setRows(orders);
+      setPage(Number(data.page || nextPage));
+      setPages(Number(data.pages || data.totalPages || 1));
+      setTotal(Number(data.total || orders.length));
     } catch (e) {
       console.error("Failed to load orders:", e);
     } finally {
@@ -85,9 +106,19 @@ export default function CustomerOrders() {
   }
 
   useEffect(() => {
-    loadOrders();
+    loadOrders(1, statusFilter, q, pageSize, sorting);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, q]);
+  }, [statusFilter]);
+  
+  // Auto-refresh when search is cleared
+  useEffect(() => {
+    if (!q.trim()) {
+      // Search is empty, refresh to show all
+      setPage(1);
+      loadOrders(1, statusFilter, "", pageSize, sorting);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
   // Statistics
   const stats = useMemo(() => {
@@ -184,7 +215,7 @@ export default function CustomerOrders() {
     data: rows,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
+    manualSorting: true, // Server-side sorting
     state: { sorting },
     onSortingChange: setSorting,
   });
@@ -220,13 +251,25 @@ export default function CustomerOrders() {
       {/* Filters */}
       <div className="mb-6 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
         <div className="flex items-center gap-2">
-          <Tab active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>
+          <Tab active={statusFilter === "all"} onClick={() => {
+            setStatusFilter("all");
+            setPage(1);
+            loadOrders(1, "all", q, pageSize, sorting);
+          }}>
             All ({stats.all})
           </Tab>
-          <Tab active={statusFilter === "pending"} onClick={() => setStatusFilter("pending")}>
+          <Tab active={statusFilter === "pending"} onClick={() => {
+            setStatusFilter("pending");
+            setPage(1);
+            loadOrders(1, "pending", q, pageSize, sorting);
+          }}>
             Pending ({stats.pending})
           </Tab>
-          <Tab active={statusFilter === "delivered"} onClick={() => setStatusFilter("delivered")}>
+          <Tab active={statusFilter === "delivered"} onClick={() => {
+            setStatusFilter("delivered");
+            setPage(1);
+            loadOrders(1, "delivered", q, pageSize, sorting);
+          }}>
             Delivered ({stats.delivered})
           </Tab>
         </div>
@@ -235,7 +278,8 @@ export default function CustomerOrders() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            loadOrders();
+            setPage(1);
+            loadOrders(1, statusFilter, q, pageSize, sorting);
           }}
           className="flex items-center gap-2"
         >
@@ -309,6 +353,26 @@ export default function CustomerOrders() {
               ))}
             </tbody>
           </table>
+          
+          {/* Pagination */}
+          <Pagination
+            page={page}
+            pages={pages}
+            pageSize={pageSize}
+            total={total}
+            itemsCount={rows.length}
+            itemLabel="orders"
+            onPageChange={(newPage) => {
+              if (newPage >= 1 && newPage <= pages) {
+                loadOrders(newPage, statusFilter, q, pageSize, sorting);
+              }
+            }}
+            onPageSizeChange={(newPageSize) => {
+              setPageSize(newPageSize);
+              setPage(1);
+              loadOrders(1, statusFilter, q, newPageSize, sorting);
+            }}
+          />
         </div>
       )}
 

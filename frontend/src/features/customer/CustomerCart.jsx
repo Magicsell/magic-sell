@@ -305,7 +305,7 @@ export default function CustomerCart() {
                 >
                   {item.imageUrl ? (
                     <img
-                      src={item.imageUrl.startsWith("http") ? item.imageUrl : `${API_URL}${item.imageUrl}`}
+                      src={item.imageUrl.startsWith("http") || item.imageUrl.startsWith("data:") ? item.imageUrl : `${API_URL}${item.imageUrl}`}
                       alt={item.name}
                       className="w-full h-full object-cover"
                     />

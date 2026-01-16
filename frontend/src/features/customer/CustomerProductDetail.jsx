@@ -170,7 +170,7 @@ export default function CustomerProductDetail() {
     if (product.imageUrl.startsWith("/uploads/products/")) {
       normalizedUrl = product.imageUrl.replace("/uploads/products/", "/api/files/products/");
     }
-    imageSrc = normalizedUrl.startsWith("http")
+    imageSrc = normalizedUrl.startsWith("http") || normalizedUrl.startsWith("data:")
       ? normalizedUrl
       : normalizedUrl.startsWith("/")
       ? `${API_URL}${normalizedUrl}`

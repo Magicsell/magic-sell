@@ -38,7 +38,7 @@ app.use(cors({
 }));
 // app.options("*", cors());
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 /* Health */
 app.get("/", (_req, res) => res.send("MagicSell Backend API running..."));

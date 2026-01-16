@@ -188,7 +188,7 @@ export const updateProduct = async (req, res) => {
     if (b.name != null) update.name = b.name.trim();
     if (b.description != null) update.description = b.description.trim();
     if (b.price != null) update.price = Number(b.price);
-    if (b.imageUrl != null) update.imageUrl = b.imageUrl;
+    if (b.imageUrl !== undefined) update.imageUrl = b.imageUrl;
     if (b.brand != null) update.brand = b.brand.trim() || null;
     if (b.size != null) update.size = b.size.trim() || null;
     if (b.unit != null) update.unit = b.unit;

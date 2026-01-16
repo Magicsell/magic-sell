@@ -61,10 +61,36 @@ export function handleProofUpload(req, res) {
 // Product image upload handler
 export function handleProductImageUpload(req, res) {
   if (!req.file) return res.status(400).json({ message: "file missing" });
-  const filename = req.file.filename;
-  // Her zaman API endpoint kullan (local'de de static serving yok)
-  const url = `/api/files/products/${filename}`;
-  res.json({ url });
+  
+  try {
+    // Vercel'de file system kalıcı değil, bu yüzden base64 olarak saklayalım
+    // Frontend'e data URI döndür, MongoDB'de saklanacak
+    let base64;
+    
+    // Check if file is in memory (buffer) or on disk (path)
+    if (req.file.buffer) {
+      // File is in memory (multer.memoryStorage)
+      base64 = req.file.buffer.toString('base64');
+    } else if (req.file.path) {
+      // File is on disk (multer.diskStorage) - read it and convert to base64
+      const fileBuffer = fs.readFileSync(req.file.path);
+      base64 = fileBuffer.toString('base64');
+      // Clean up the temporary file
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (unlinkErr) {
+        console.warn("Failed to delete temporary file:", unlinkErr);
+      }
+    } else {
+      return res.status(400).json({ message: "Unable to process file" });
+    }
+    
+    const dataUri = `data:${req.file.mimetype || 'image/jpeg'};base64,${base64}`;
+    res.json({ url: dataUri });
+  } catch (error) {
+    console.error("Error processing product image:", error);
+    res.status(500).json({ message: "Failed to process image", error: error.message });
+  }
 }
 
 // Vercel'de kayıtlı resmi stream'lemek için:
@@ -77,11 +103,14 @@ export function serveProof(req, res) {
 }
 
 export function serveProductImage(req, res) {
+  // Artık image'lar base64 olarak MongoDB'de saklanıyor
+  // Bu endpoint sadece eski image'lar için (backward compatibility)
+  // Yeni image'lar data URI olarak direkt kullanılıyor
   const file = path.join(productsDir, req.params.filename);
   fs.stat(file, (err) => {
     if (err) {
       console.error("Product image not found:", file);
-      return res.status(404).json({ error: "Image not found" });
+      return res.status(404).json({ error: "Image not found. Please re-upload the image." });
     }
     res.sendFile(file, (sendErr) => {
       if (sendErr) {
